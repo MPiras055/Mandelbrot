@@ -3,6 +3,8 @@
 #include <complex>
 #include <cassert>
 #include <boost/multiprecision/cpp_bin_float.hpp>
+#include "core/Numeric.hpp"
+#include "core/Kernel.hpp"
 #include "macro_util.hpp"
 #include "util/FrameBuffer.hpp"
 #include "util/ColorUtil.hpp"
@@ -14,8 +16,8 @@ namespace engine {
 
 class MandelbrotEngine;
 
-using BigFloat = boost::multiprecision::cpp_bin_float_50;
-using ComplexDouble = std::complex<double>;
+using BigFloat = core::BigFloat;
+using ComplexDouble = core::ComplexDouble;
 
 class PerturbationEngine {
     static constexpr size_t PROBE_MROW = 128;
@@ -396,14 +398,14 @@ class PerturbationEngine {
         // ==============================================================================
         // MAIN PIXEL RENDERING LOOP
         // ==============================================================================
-        Color* const __restrict__ raw_canvas = backBuffer.data();
+        core::Pixel* const __restrict__ raw_canvas = backBuffer.data();
 
         // Calculate absolute viewport center coordinates preserving precision
         double dbl_golden_cx = static_cast<double>(BigFloat(specs.x)) + best_dx;
         double dbl_golden_cy = static_cast<double>(BigFloat(specs.y)) + best_dy;
 
         for (int py = tile_py; py < end_py; py++) {
-            Color* const row_ptr = raw_canvas + (py * specs.width);
+            core::Pixel* const row_ptr = raw_canvas + (py * specs.width);
             double dc_imag = base_screen_yMin + (py * specs.pixelStepY) - best_dy;
 
             for (int px = tile_px; px < end_px; px++) {
@@ -477,7 +479,7 @@ class PerturbationEngine {
                 }
 
                 if (glitched) {
-                    row_ptr[px] = Color{255, 0, 255, 255}; 
+                    row_ptr[px] = core::Pixel{255, 0, 255, 255}; 
                 } else {
                     row_ptr[px] = util::ColorUtil::Compute(iter, max_iter, static_cast<float>(final_r2), gradient);
                 }
@@ -625,10 +627,8 @@ public:
     }
 
     static inline size_t CalculateTotalChunks(unsigned int width, unsigned int height) noexcept {
-        size_t blocks_x = (width + 31) / 32;
-        size_t blocks_y = (height + 31) / 32;
-        return blocks_x * blocks_y;
-    }       
+        return core::CalculateTotalChunks(width, height);
+    }
 };
 
 } // namespace engine

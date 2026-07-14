@@ -4,6 +4,7 @@
 #include <complex>
 #include <limits>
 #include <boost/multiprecision/cpp_bin_float.hpp>
+#include "core/Numeric.hpp"
 #include "../../macro_util.hpp"
 
 namespace engine::job {
@@ -18,7 +19,7 @@ struct InitialOrbit;
 struct OptimalOrbitCache;
 
 struct PerturbationJob {
-    using ComplexDouble = std::complex<double>;
+    using ComplexDouble = core::ComplexDouble;
 
     PerturbationJob()  noexcept = default;
     ~PerturbationJob() noexcept {}

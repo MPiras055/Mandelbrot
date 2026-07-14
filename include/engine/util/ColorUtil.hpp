@@ -1,16 +1,18 @@
 #pragma once
-#include <raylib.h>
 #include <cmath>
 #include <vector>
 #include <algorithm> // Required for std::sort
+#include "core/Pixel.hpp"
 
 namespace engine::util {
+
+using core::Pixel;
 /**
  * @brief Represents a single color marker on a continuous spectrum.
  */
 struct GradientStop {
     float position; // Anchor point from 0.0f (start) to 1.0f (end)
-    Color color;    // The Raylib color at this anchor point
+    Pixel color;    // The Raylib color at this anchor point
 };
 
 /**
@@ -58,8 +60,8 @@ public:
     /**
      * @brief Linearly interpolates (LERPs) between two distinct RGBA colors.
      */
-    static inline Color LerpColor(Color c1, Color c2, float t) noexcept {
-        return Color{
+    static inline Pixel LerpColor(Pixel c1, Pixel c2, float t) noexcept {
+        return Pixel{
             static_cast<unsigned char>(c1.r + t * (c2.r - c1.r)),
             static_cast<unsigned char>(c1.g + t * (c2.g - c1.g)),
             static_cast<unsigned char>(c1.b + t * (c2.b - c1.b)),
@@ -70,8 +72,8 @@ public:
     /**
      * @brief Scans a pre-sorted gradient vector to evaluate the exact RGB value at ratio 't'.
      */
-    static inline Color SampleGradient(const std::vector<GradientStop>& stops, float t) noexcept {
-        if (stops.empty()) return BLACK;
+    static inline Pixel SampleGradient(const std::vector<GradientStop>& stops, float t) noexcept {
+        if (stops.empty()) return core::PIXEL_BLACK;
         
         // Clamp boundaries to prevent out-of-bounds evaluation artifacts
         if (t <= stops.front().position) return stops.front().color;
@@ -84,7 +86,7 @@ public:
                 return LerpColor(stops[i].color, stops[i+1].color, segment_t);
             }
         }
-        return BLACK;
+        return core::PIXEL_BLACK;
     }
 
     // --- CORE KERNEL EVALUATORS ---
@@ -98,11 +100,11 @@ public:
      * @param smooth_shading  Toggle for continuous log-log mathematical blending.
      * @param root_scaling    Toggle for non-linear square-root distribution scaling.
      */
-    static inline Color Compute(unsigned int iter, unsigned int active_max_iter, float r2, 
+    static inline Pixel Compute(unsigned int iter, unsigned int active_max_iter, float r2, 
                                 const std::vector<GradientStop>& stops, 
                                 bool smooth_shading, bool root_scaling) noexcept 
     {
-        if (iter >= active_max_iter) return BLACK;
+        if (iter >= active_max_iter) return core::PIXEL_BLACK;
 
         float final_t = 0.0f;
 
@@ -133,7 +135,7 @@ public:
     * @param r2              The magnitude squared of complex number Z (x^2 + y^2) at escape moment.
     * @param gradient        The unified coloring configuration profile containing pre-sorted stops and toggles.
     */
-    static inline Color Compute(unsigned int iter, unsigned int active_max_iter, float r2, 
+    static inline Pixel Compute(unsigned int iter, unsigned int active_max_iter, float r2, 
                                 const Gradient& gradient) noexcept 
     {
         return Compute(
@@ -149,11 +151,11 @@ public:
     /**
      * @brief Fast-pass discrete color accessor, ignoring the smooth shading logarithmic overhead.
      */
-    static inline Color EvaluateDiscrete(unsigned int iter, unsigned int active_max_iter, 
+    static inline Pixel EvaluateDiscrete(unsigned int iter, unsigned int active_max_iter, 
                                          const std::vector<GradientStop>& stops, 
                                          bool root_scaling) noexcept 
     {
-        if (iter >= active_max_iter) return BLACK;
+        if (iter >= active_max_iter) return core::PIXEL_BLACK;
         
         float t = static_cast<float>(iter) / static_cast<float>(active_max_iter);
         if (root_scaling) t = std::sqrt(t);
@@ -164,11 +166,11 @@ public:
     /**
      * @brief Allows float iterations for manual custom external smooth handlers.
      */
-    static inline Color EvaluateContinuous(float iter, unsigned int active_max_iter, 
+    static inline Pixel EvaluateContinuous(float iter, unsigned int active_max_iter, 
                                            const std::vector<GradientStop>& stops, 
                                            bool root_scaling) noexcept 
     {
-        if (iter >= static_cast<float>(active_max_iter)) return BLACK;
+        if (iter >= static_cast<float>(active_max_iter)) return core::PIXEL_BLACK;
 
         float t = iter / static_cast<float>(active_max_iter);
         if (root_scaling) t = std::sqrt(t);

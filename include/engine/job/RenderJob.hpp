@@ -3,6 +3,7 @@
 #include <variant>
 #include <boost/multiprecision/cpp_bin_float.hpp>
 #include <cassert>
+#include "core/Numeric.hpp"
 #include "../util/TaggedReferenceCounter.hpp"
 #include "../job/EscapeTimeJob.hpp"
 #include "../job/PerturbationJob.hpp"
@@ -15,7 +16,7 @@ namespace engine::job {
 
     struct RenderJob {
         
-        using BigFloat = boost::multiprecision::cpp_bin_float_50;
+        using BigFloat = core::BigFloat;
         /**
          * @brief: specifics for a RenderJob
          * 

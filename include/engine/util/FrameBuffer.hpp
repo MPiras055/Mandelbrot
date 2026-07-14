@@ -1,35 +1,37 @@
-#pragma once 
+#pragma once
 #include <cstdlib>
-#include <raylib.h>
 #include <cassert>
 #include <utility> // For std::swap
+#include "core/Pixel.hpp"
 
 namespace engine::util {
-    
+
+using core::Pixel;
+
 struct FrameBuffer {
     private:
     size_t capacity_; 
     size_t size_;
-    Color *data_;
+    Pixel *data_;
 
     public:
 
     struct View {
-        const Color* const pixels;
+        const Pixel* const pixels;
         const unsigned int height;
         const unsigned int width;
         bool uptodate;
 
         private:
         friend FrameBuffer;
-        View(Color* const pixels, unsigned int height,unsigned int width, bool uptodate = false):
+        View(Pixel* const pixels, unsigned int height,unsigned int width, bool uptodate = false):
             pixels{pixels},width{width},height{height},uptodate{uptodate} {};
     };
 
         
     FrameBuffer(size_t capacity, unsigned int height, unsigned int width):
         capacity_{capacity}, size_{height * width},
-        data_{new Color[capacity_]} {
+        data_{new Pixel[capacity_]} {
             assert(capacity_ != 0 && "FrameBuffer: capacity must be non null");
             assert(size_ != 0 && "FrameBuffer: size must be non null");
     }
@@ -47,7 +49,7 @@ struct FrameBuffer {
     /**
      * @brief const access operator
      */
-    Color operator[](size_t index) const {
+    Pixel operator[](size_t index) const {
         assert(index < capacity_ && "FrameBuffer: out of bounds access");
         return data_[index];
     }
@@ -55,7 +57,7 @@ struct FrameBuffer {
     /**
      * @brief index set operator
      */
-    Color& operator[](size_t index) {
+    Pixel& operator[](size_t index) {
         assert(index < capacity_ && "FrameBuffer: out of bounds set");
         return data_[index];
     }
@@ -63,7 +65,7 @@ struct FrameBuffer {
     /**
      * @brief: get the underlying memory
      */
-    Color* data() {
+    Pixel* data() {
         return data_;
     }
 

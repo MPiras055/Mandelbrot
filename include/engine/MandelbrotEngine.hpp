@@ -6,7 +6,9 @@
 #include <string>
 #include <cmath>
 // 1. Include the multiprecision library
-#include <boost/multiprecision/cpp_bin_float.hpp> 
+#include <boost/multiprecision/cpp_bin_float.hpp>
+#include "core/Numeric.hpp"
+#include "Camera.hpp"
 #include "engine/job/PerturbationJob.hpp"
 #include "util/ColorUtil.hpp"
 #include "EscapeTimeEngine.hpp"
@@ -17,7 +19,7 @@
 
 namespace engine {
 
-using BigFloat = boost::multiprecision::cpp_bin_float_50;
+using BigFloat = core::BigFloat;
 
 class MandelbrotEngine {
 
@@ -41,14 +43,14 @@ class MandelbrotEngine {
 
     util::Gradient global_gradient_{
         .stops = {
-            { 0.00f, Color{ 5, 5, 15, 255 } },       // Abyssal Navy
-            { 0.14f, Color{ 0, 190, 255, 255 } },    // Electric Cyan
-            { 0.28f, Color{ 255, 255, 255, 255 } },  // Peak 1: Pure White (Contour Bounce)
-            { 0.42f, Color{ 235, 45, 10, 255 } },    // Magma Red
-            { 0.57f, Color{ 255, 215, 0, 255 } },    // Solar Gold
-            { 0.71f, Color{ 15, 5, 20, 255 } },      // Peak 2: Obsidian Black (Contour Bounce)
-            { 0.85f, Color{ 180, 0, 235, 255 } },    // Neon Violet
-            { 1.00f, Color{ 110, 255, 50, 255 } }    // Radioactive Lime
+            { 0.00f, core::Pixel{ 5, 5, 15, 255 } },       // Abyssal Navy
+            { 0.14f, core::Pixel{ 0, 190, 255, 255 } },    // Electric Cyan
+            { 0.28f, core::Pixel{ 255, 255, 255, 255 } },  // Peak 1: Pure White (Contour Bounce)
+            { 0.42f, core::Pixel{ 235, 45, 10, 255 } },    // Magma Red
+            { 0.57f, core::Pixel{ 255, 215, 0, 255 } },    // Solar Gold
+            { 0.71f, core::Pixel{ 15, 5, 20, 255 } },      // Peak 2: Obsidian Black (Contour Bounce)
+            { 0.85f, core::Pixel{ 180, 0, 235, 255 } },    // Neon Violet
+            { 1.00f, core::Pixel{ 110, 255, 50, 255 } }    // Radioactive Lime
         },
         .smooth_shading = true,
         .root_scaling = true
@@ -58,16 +60,10 @@ class MandelbrotEngine {
     CACHE_ALIGN std::atomic_bool stopPool{false};
     CACHE_PAD(std::atomic_bool)
 
-    // 3. UPGRADE CAMERA STATE TO BIGFLOAT
-    // Zoom remains double because scale magnitude (e.g., 1e30) fits cleanly in 64-bit exponent boundaries
-    BigFloat offsetX{-0.5};
-    BigFloat offsetY{0.0};
-    double zoom{1.0};
+    // Camera state (center as BigFloat, zoom as double) extracted into its own
+    // entity; MandelbrotEngine forwards the public navigation API to it.
+    Camera cam;
     bool deltaProbingOn{true};
-    
-    BigFloat targetOffsetX{offsetX};
-    BigFloat targetOffsetY{offsetY};
-    double targetZoom{zoom};
 
     uint64_t stampLastFlipped;
     util::FrameBuffer frontBuffer;
@@ -105,12 +101,12 @@ class MandelbrotEngine {
             unsigned int iterations
         ) {
         double aspect = (double)screenWidth / screenHeight;
-        double mathWidth = 3.0 / zoom; 
+        double mathWidth = 3.0 / cam.currentZoom();
         double mathHeight = mathWidth / aspect;
-        
+
         // Downcast to double for ETA Engine absolute bounds (Safe: only used when zoom < 1e14)
-        BigFloat xMin = offsetX - (mathWidth / 2.0);
-        BigFloat yMin = offsetY - (mathHeight / 2.0);
+        BigFloat xMin = cam.centerX() - (mathWidth / 2.0);
+        BigFloat yMin = cam.centerY() - (mathHeight / 2.0);
         double stepX = mathWidth / renderWidth;
         double stepY = mathHeight / renderHeight;
         
@@ -124,12 +120,12 @@ class MandelbrotEngine {
         specs.pixelStepY         = stepY;
         specs.enableDeltaProbing = deltaProbingOn;
         
-        JobStrategy strat = zoom < ZOOM_PTB_THRESH ? JobStrategy::ETA : JobStrategy::PERTURBATION;
-        
-    
+        JobStrategy strat = cam.currentZoom() < ZOOM_PTB_THRESH ? JobStrategy::ETA : JobStrategy::PERTURBATION;
+
+
         if (strat == JobStrategy::PERTURBATION) {
-            specs.x = offsetX;
-            specs.y = offsetY;
+            specs.x = cam.centerX();
+            specs.y = cam.centerY();
         }
 
         specs.chunks     = (strat == JobStrategy::ETA ? 
@@ -166,7 +162,7 @@ class MandelbrotEngine {
             if(job.acquire(last_version)) { 
                 bool wait = false;
                 if (job.holds<job::RenderJob::ETAJob>()) {
-                    bool use_float = zoom < ZOOM_ETA_DOUBLE_THRESH;
+                    bool use_float = cam.currentZoom() < ZOOM_ETA_DOUBLE_THRESH;
                     if(use_float) 
                         etaEngine.processEscapeTimeJob<float>(job);
                     else
@@ -235,62 +231,25 @@ class MandelbrotEngine {
     }
     
     // Convert BigFloat back to double ONLY for UI tracking queries
-    double getOffsetX() const {return static_cast<double>(targetOffsetX);}
-    double getOffsetY() const {return static_cast<double>(targetOffsetY);}
-    double getZoom()    const {return zoom;}
-    
+    double getOffsetX() const { return cam.uiOffsetX(); }
+    double getOffsetY() const { return cam.uiOffsetY(); }
+    double getZoom()    const { return cam.currentZoom(); }
+
     void pan(float mouseDeltaX, float mouseDeltaY, unsigned int screenWidth, unsigned int screenHeight) {
-        // Boost perfectly handles implicit math mixing floats, doubles, and BigFloats
-        targetOffsetX -= BigFloat((mouseDeltaX / screenWidth) * (3.0 / targetZoom));
-        targetOffsetY -= BigFloat((mouseDeltaY / screenHeight) * (3.0 * screenHeight / screenWidth) / targetZoom);
+        cam.pan(mouseDeltaX, mouseDeltaY, screenWidth, screenHeight);
     }
 
-    void applyZoom(float wheelMove, 
-        unsigned int mouseX, unsigned int mouseY, 
+    void applyZoom(float wheelMove,
+        unsigned int mouseX, unsigned int mouseY,
         unsigned int screenWidth, unsigned int screenHeight
     ) {
-        
-        if(wheelMove == 0.0f) return; 
-        double aspect     = static_cast<double>(screenWidth) / screenHeight;
-        double mathWidth  = 3.0 / targetZoom;
-        double mathHeight = mathWidth / aspect;
-        
-        // Boost handles precision mapping seamlessly
-        BigFloat mouseMathX_before = targetOffsetX - (mathWidth / 2.0) + ((double)mouseX / screenWidth) * mathWidth;
-        BigFloat mouseMathY_before = targetOffsetY - (mathHeight / 2.0) + ((double)mouseY / screenHeight) * mathHeight;
-        
-        targetZoom *= (wheelMove > 0) ? 1.2 : (1.0 / 1.2);
-        
-        mathWidth = 3.0 / targetZoom;
-        mathHeight = mathWidth / aspect;
-        BigFloat mouseMathX_after = targetOffsetX - (mathWidth / 2.0) + ((double)mouseX / screenWidth) * mathWidth;
-        BigFloat mouseMathY_after = targetOffsetY - (mathHeight / 2.0) + ((double)mouseY / screenHeight) * mathHeight;
-        
-        targetOffsetX += (mouseMathX_before - mouseMathX_after);
-        targetOffsetY += (mouseMathY_before - mouseMathY_after);
+        cam.applyZoom(wheelMove, mouseX, mouseY, screenWidth, screenHeight);
     }
 
     bool updateCamera() {
-        double diffZoom = targetZoom - zoom;
-        BigFloat diffX = targetOffsetX - offsetX;
-        BigFloat diffY = targetOffsetY - offsetY;
-        float dt = std::min(GetFrameTime(), 0.1f);
-        double damping = 1.0 - std::exp(-15.0 * dt); 
-    
-        zoom += diffZoom * damping;
-        offsetX += diffX * damping;
-        offsetY += diffY * damping;
-        
-        double moveThreshold = (3.0 / zoom) * 0.0001; 
-        
-        // Use boost::multiprecision::abs for BigFloat bounds checking
-        if (std::abs(diffZoom / zoom) < 0.0001 && boost::multiprecision::abs(diffX) < moveThreshold && boost::multiprecision::abs(diffY) < moveThreshold) {
-            zoom = targetZoom;
-            offsetX = targetOffsetX;
-            offsetY = targetOffsetY;
-            return false; 
-        } 
-        return true; 
+        // The frame-clock read stays at the raylib boundary; Camera itself is
+        // toolkit-independent and consumes the clamped delta.
+        return cam.updateCamera(std::min(GetFrameTime(), 0.1f));
     }
 
     bool tryDispatchFrame(
@@ -365,55 +324,27 @@ class MandelbrotEngine {
 
     /**
         * @brief Resets the camera space variables immediately to their initial state.
-        * Synchronizes targets to prevent erratic linear interpolation on the next updateCamera tick.
         */
-    void resetCamera() {
-        targetOffsetX = -0.5;
-        targetOffsetY = 0.0;
-        targetZoom    = 1.0;
-        
-        offsetX = targetOffsetX;
-        offsetY = targetOffsetY;
-        zoom    = targetZoom;
-    }
+    void resetCamera() { cam.reset(); }
 
-    struct CameraSnapshot {
-            BigFloat x;
-            BigFloat y;
-            double z;
-    };
+    // Preserve the MandelbrotEngine::CameraSnapshot name (the GUI's undo history is
+    // typed on it); the type itself now lives in Camera.
+    using CameraSnapshot = Camera::Snapshot;
 
     /**
         * @brief Instantly snaps the camera to a snapshot, bypassing linear damping.
         */
-    void warpCamera(const CameraSnapshot& snap) {
-        targetOffsetX = snap.x; targetOffsetY = snap.y; targetZoom = snap.z;
-        offsetX       = snap.x; offsetY       = snap.y; zoom       = snap.z;
-    }
+    void warpCamera(const CameraSnapshot& snap) { cam.warp(snap); }
 
     /**
         * @brief Calculates target snapshot from a screen bounding box WITHOUT modifying state.
         */
-    CameraSnapshot calculateBoxSnapshot(unsigned int x1, unsigned int y1, unsigned int x2, unsigned int y2, 
+    CameraSnapshot calculateBoxSnapshot(unsigned int x1, unsigned int y1, unsigned int x2, unsigned int y2,
                                         unsigned int screenW, unsigned int screenH) const {
-        unsigned int minX = std::min(x1, x2), maxX = std::max(x1, x2);
-        unsigned int minY = std::min(y1, y2), maxY = std::max(y1, y2);
-        double boxW = maxX - minX, boxH = maxY - minY;
-
-        double aspect = static_cast<double>(screenW) / screenH;
-        double mathW  = 3.0 / targetZoom, mathH = mathW / aspect;
-        double centerPxX = minX + (boxW / 2.0), centerPxY = minY + (boxH / 2.0);
-
-        CameraSnapshot next;
-        next.x = targetOffsetX - (mathW / 2.0) + (centerPxX / screenW) * mathW;
-        next.y = targetOffsetY - (mathH / 2.0) + (centerPxY / screenH) * mathH;
-        next.z = targetZoom / std::max(boxW / screenW, boxH / screenH);
-        return next;
+        return cam.calculateBoxSnapshot(x1, y1, x2, y2, screenW, screenH);
     }
-    
-    CameraSnapshot getCurrentSnapshot() const {
-        return {targetOffsetX, targetOffsetY, targetZoom};
-    }
+
+    CameraSnapshot getCurrentSnapshot() const { return cam.currentSnapshot(); }
 };
     
 } //namespace mandelbrot_engine

@@ -3,6 +3,7 @@
 #include <experimental/simd>
 #include <algorithm>
 #include "macro_util.hpp"
+#include "core/Kernel.hpp"
 #include "util/FrameBuffer.hpp"
 #include "util/ColorUtil.hpp"
 #include "job/RenderJob.hpp"
@@ -61,12 +62,12 @@ private:
         
         const stdx::simd<F> x_step_offsets = stdx::simd<F>([](size_t i) { return static_cast<F>(i); }) * f_stepX;
         
-        Color* const __restrict__ raw_canvas = backBuffer.data();
+        core::Pixel* const __restrict__ raw_canvas = backBuffer.data();
         const IntF iterMaxCast = static_cast<IntF>(max_iteration);
         const int signed_width = static_cast<int>(specs.width);
     
         for (int py = start_y; py < end_y; ++py) {
-            Color* const row_ptr = raw_canvas + (py * signed_width);
+            core::Pixel* const row_ptr = raw_canvas + (py * signed_width);
             const stdx::simd<F> c_imag = f_yMin + (static_cast<F>(py) * f_stepY);
             const stdx::simd<F> c_imag_sq = c_imag * c_imag; 
     
@@ -89,7 +90,7 @@ private:
                     if (stdx::all_of(inside_set)) {
                         // TAIL SAFE CLAMP: Prevent writing past screen edge on early-out
                         const int valid_lanes = std::min(V_WIDTH, signed_width - px);
-                        for (int i = 0; i < valid_lanes; ++i) row_ptr[px + i] = BLACK;
+                        for (int i = 0; i < valid_lanes; ++i) row_ptr[px + i] = core::PIXEL_BLACK;
                         continue; 
                     }
                 }
@@ -158,10 +159,8 @@ public:
     }
 
     static inline size_t CalculateTotalChunks(unsigned int width, unsigned int height) noexcept {
-        size_t blocks_x = (width + 31) / 32;
-        size_t blocks_y = (height + 31) / 32;
-        return blocks_x * blocks_y;
-    }       
+        return core::CalculateTotalChunks(width, height);
+    }
 };
 
 } // namespace mandelbrot_engine
