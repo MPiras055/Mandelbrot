@@ -163,4 +163,4 @@ public:
     }
 };
 
-} // namespace mandelbrot_engine
+} // namespace engine

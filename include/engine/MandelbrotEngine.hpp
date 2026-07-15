@@ -9,6 +9,7 @@
 #include <boost/multiprecision/cpp_bin_float.hpp>
 #include "core/Numeric.hpp"
 #include "Camera.hpp"
+#include "concurrency/WorkerPool.hpp"
 #include "engine/job/PerturbationJob.hpp"
 #include "util/ColorUtil.hpp"
 #include "EscapeTimeEngine.hpp"
@@ -56,9 +57,7 @@ class MandelbrotEngine {
         .root_scaling = true
     };
     
-    std::vector<std::thread> threadPool;
-    CACHE_ALIGN std::atomic_bool stopPool{false};
-    CACHE_PAD(std::atomic_bool)
+    concurrency::WorkerPool pool;
 
     // Camera state (center as BigFloat, zoom as double) extracted into its own
     // entity; MandelbrotEngine forwards the public navigation API to it.
@@ -151,7 +150,7 @@ class MandelbrotEngine {
     void workerRoutine(size_t thread_id) {
         uint64_t last_version = jobStack.get_latest_job().getStamp();
         
-        while(!stopPool.load(std::memory_order_relaxed)) {
+        while(!pool.stopRequested()) {
             auto& job = jobStack.get_latest_job();
             last_version = job.getStamp();
             if (job.done()) {
@@ -201,13 +200,9 @@ class MandelbrotEngine {
     {
         global_gradient_.prepare();
 
-        unsigned int numCores = std::thread::hardware_concurrency();
-        unsigned int poolSize = (numCores > 2) ? (numCores - 1) : 2;
-
-        threadPool.reserve(poolSize);
-        for (size_t i = 0; i < poolSize; ++i) {
-            threadPool.emplace_back(&MandelbrotEngine::workerRoutine, this, i);
-        }
+        // Spawn workers only now that every collaborator the routine touches
+        // (jobStack, engines, camera) is fully constructed.
+        pool.start([this](size_t id) { workerRoutine(id); });
     }
 
     static MandelbrotEngine create(unsigned int height,unsigned int width) {
@@ -220,14 +215,12 @@ class MandelbrotEngine {
     }
 
     ~MandelbrotEngine() {
-        stopPool.store(true, std::memory_order_release);
+        // Same shutdown sequence as before: flag stop, push a dummy job to wake
+        // any parked workers, then join.
+        pool.requestStop();
         TaggedJobSpecs t;
         jobStack.try_push<job::PerturbationJob>(t.specs);
-        for (std::thread& worker : threadPool) {
-            if (worker.joinable()) {
-                worker.join();
-            }
-        }
+        pool.join();
     }
     
     // Convert BigFloat back to double ONLY for UI tracking queries
@@ -347,4 +340,4 @@ class MandelbrotEngine {
     CameraSnapshot getCurrentSnapshot() const { return cam.currentSnapshot(); }
 };
     
-} //namespace mandelbrot_engine
+} // namespace engine
