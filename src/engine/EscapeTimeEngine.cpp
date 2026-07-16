@@ -7,42 +7,52 @@
 namespace engine {
 
 /**
- * @brief Processes a chunk with a standard ETA algorithm.
+ * @brief Processes a fixed 2D tile with a standard ETA algorithm.
  * @note periodically (every 64 iterations) checks if the job was aborted.
  */
 template<typename F>
 void EscapeTimeEngine::processChunkSIMD(const job::RenderJob::ETAJob& job_ref,
                                         const job::RenderJob::JobSpecs specs, const size_t chunk_idx) {
     namespace stdx = std::experimental;
-    static constexpr bool OPT_CARDIOID_BULB = true; //we throw out the cardioid and bulb optimization for high zoom optimization
+    static constexpr bool OPT_CARDIOID_BULB = true;
 
-    const int total_chunks = static_cast<int>(specs.chunks);
-    const int start_y = (static_cast<int>(chunk_idx) * static_cast<int>(specs.height)) / total_chunks;
-    const int end_y   = ((static_cast<int>(chunk_idx) + 1) * static_cast<int>(specs.height)) / total_chunks;
+    const int signed_width = static_cast<int>(specs.width);
+    const int signed_height = static_cast<int>(specs.height);
+
+    // 1. Map 1D chunk_idx to 2D grid coordinates (Factoring out total_chunks entirely)
+    const int grid_cols = (signed_width + TILE_SIZE - 1) / TILE_SIZE;
+    const int grid_x = static_cast<int>(chunk_idx) % grid_cols;
+    const int grid_y = static_cast<int>(chunk_idx) / grid_cols;
+
+    // 2. Compute exact pixel boundaries for this specific tile
+    const int start_x = grid_x * TILE_SIZE;
+    const int end_x   = std::min(start_x + TILE_SIZE, signed_width);
+    const int start_y = grid_y * TILE_SIZE;
+    const int end_y   = std::min(start_y + TILE_SIZE, signed_height);
 
     const unsigned int max_iteration = specs.iterations;
     constexpr int V_WIDTH = static_cast<int>(stdx::simd<F>::size());
     using IntF = std::conditional_t<std::is_same_v<F, double>, unsigned long long, unsigned int>;
 
-    const F f_xMin  = static_cast<F>(specs.x);
-    const F f_yMin  = static_cast<F>(specs.y);
-    const F f_stepX = static_cast<F>(specs.pixelStepX);
-    const F f_stepY = static_cast<F>(specs.pixelStepY);
+    const F f_xMin  = static_cast<F>(specs.reference.real());
+    const F f_yMin  = static_cast<F>(specs.reference.imag());
+    const F f_stepX = static_cast<F>(specs.pixelStep.real());
+    const F f_stepY = static_cast<F>(specs.pixelStep.imag());
 
     const stdx::simd<F> x_step_offsets = stdx::simd<F>([](size_t i) { return static_cast<F>(i); }) * f_stepX;
 
     core::Pixel* const __restrict__ raw_canvas = back_buffer;
     const IntF iterMaxCast = static_cast<IntF>(max_iteration);
-    const int signed_width = static_cast<int>(specs.width);
 
+    // Restrict rendering purely to the bounds of the 2D tile
     for (int py = start_y; py < end_y; ++py) {
         core::Pixel* const row_ptr = raw_canvas + (py * signed_width);
         const stdx::simd<F> c_imag = f_yMin + (static_cast<F>(py) * f_stepY);
         const stdx::simd<F> c_imag_sq = c_imag * c_imag;
 
-        for (int px = 0; px < signed_width; px += V_WIDTH) {
+        for (int px = start_x; px < end_x; px += V_WIDTH) {
 
-            // Safe: If px=100 and width=102, lanes 2..7 compute ghost coordinates (x=102..107).
+            // Safe: If px=100 and end_x=102, lanes 2..7 compute ghost coordinates (x=102..107).
             const stdx::simd<F> c_real = f_xMin + (static_cast<F>(px) * f_stepX) + x_step_offsets;
 
             stdx::simd_mask<F> inside_set{false};
@@ -57,8 +67,8 @@ void EscapeTimeEngine::processChunkSIMD(const job::RenderJob::ETAJob& job_ref,
                 inside_set = in_cardioid || in_bulb;
 
                 if (stdx::all_of(inside_set)) {
-                    // TAIL SAFE CLAMP: Prevent writing past screen edge on early-out
-                    const int valid_lanes = std::min(V_WIDTH, signed_width - px);
+                    // TAIL SAFE CLAMP: Prevent writing past tile edge / screen edge on early-out
+                    const int valid_lanes = std::min(V_WIDTH, end_x - px);
                     for (int i = 0; i < valid_lanes; ++i) row_ptr[px + i] = core::PIXEL_BLACK;
                     continue;
                 }
@@ -100,8 +110,8 @@ void EscapeTimeEngine::processChunkSIMD(const job::RenderJob::ETAJob& job_ref,
             iterations.copy_to(iters, stdx::element_aligned);
             escape_r2.copy_to(final_r2, stdx::element_aligned);
 
-            // TAIL SAFE CLAMP: Only write back lanes that physically exist on the monitor
-            const int valid_lanes = std::min(V_WIDTH, signed_width - px);
+            // TAIL SAFE CLAMP: Only write back lanes that exist in this tile/screen boundary
+            const int valid_lanes = std::min(V_WIDTH, end_x - px);
 
             for (int i = 0; i < valid_lanes; ++i) {
                 row_ptr[px + i] = util::ColorUtil::Compute(
@@ -118,7 +128,7 @@ void EscapeTimeEngine::processEscapeTimeJob(job::RenderJob& job) {
     auto& j = job.getState<job::RenderJob::ETAJob>();
     auto specs = job.getSpecs();
 
-    while (j.get_chunk(specs.chunks, chunk_id)) {
+    while (j.get_chunk(specs.chunks,chunk_id)) {
         processChunkSIMD<F>(j, specs, chunk_id);
         j.mark_completed_chunk(chunk_id);
     }

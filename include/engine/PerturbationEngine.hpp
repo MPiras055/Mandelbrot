@@ -30,6 +30,7 @@ using ComplexDouble = core::ComplexDouble;
  * nested method.)
  */
 class PerturbationEngine {
+    static constexpr unsigned int TILE_SIZE = core::CHUNK_BLOCK;
     static constexpr size_t PROBE_MROW = 128;
     static constexpr size_t PROBE_MCOL = 128;
     static constexpr size_t PROBE_CELL_CHUNK = 128;
@@ -47,10 +48,10 @@ class PerturbationEngine {
         double grid_step_y;
 
         ProbeGridConfig(job::RenderJob::JobSpecs specs) {
-            grid_step_x = (specs.width * specs.pixelStepX) / static_cast<double>(PROBE_MCOL);
-            grid_step_y = (specs.height * specs.pixelStepY) / static_cast<double>(PROBE_MROW);
-            start_dx = -(specs.width / 2.0) * specs.pixelStepX;
-            start_dy = -(specs.height / 2.0) * specs.pixelStepY;
+            grid_step_x = (specs.width * specs.pixelStep.real()) / static_cast<double>(PROBE_MCOL);
+            grid_step_y = (specs.height * specs.pixelStep.imag()) / static_cast<double>(PROBE_MROW);
+            start_dx = -(specs.width / 2.0) * specs.pixelStep.real();
+            start_dy = -(specs.height / 2.0) * specs.pixelStep.imag();
         }
     };
 
@@ -373,8 +374,8 @@ public:
     /// Wait-free per-job driver (7-phase pipeline). Defined in the .cpp.
     void processPerturbationJob(job::RenderJob& job);
 
-    static inline size_t CalculateTotalChunks(unsigned int width, unsigned int height) noexcept {
-        return core::CalculateTotalChunks(width, height);
+    static inline size_t getChunks(unsigned int width, unsigned int height) noexcept {
+        return core::ComputeTotalChunks(width, height);
     }
 };
 

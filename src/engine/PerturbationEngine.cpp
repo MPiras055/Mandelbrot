@@ -28,26 +28,24 @@ void PerturbationEngine::processChunkScalar(
     double best_dx,
     double best_dy
 ) {
-    static constexpr size_t BLOCK_SIZE = 32;
-
     const OrbitRecord* __restrict__ finalOrbitCache = finalOrbitCacheRef.data();
     const unsigned int max_iter = specs.iterations;
     const size_t valid_orbit_size = finalOrbitCacheRef.size();
 
     // Calculate how many 2D tiles fit across the X-axis of the screen
-    const int tiles_x = (specs.width + BLOCK_SIZE - 1) / BLOCK_SIZE;
+    const int tiles_x = (specs.width + TILE_SIZE - 1) / TILE_SIZE;
 
     // Convert the 1D chunk_idx into a starting 2D pixel coordinate (top-left of the block)
-    const size_t tile_px = (chunk_idx % tiles_x) * BLOCK_SIZE;
-    const size_t tile_py = (chunk_idx / tiles_x) * BLOCK_SIZE;
+    const size_t tile_px = (chunk_idx % tiles_x) * TILE_SIZE;
+    const size_t tile_py = (chunk_idx / tiles_x) * TILE_SIZE;
 
     // Clamp the boundaries so edge chunks don't render outside the screen array
-    const int end_px = std::min(tile_px + BLOCK_SIZE, static_cast<size_t>(specs.width));
-    const int end_py = std::min(tile_py + BLOCK_SIZE, static_cast<size_t>(specs.height));
+    const int end_px = std::min(tile_px + TILE_SIZE, static_cast<size_t>(specs.width));
+    const int end_py = std::min(tile_py + TILE_SIZE, static_cast<size_t>(specs.height));
 
     // Compute the distance from the mathematical center of the screen to the top-left corner
-    double base_screen_xMin = -(specs.width / 2.0) * specs.pixelStepX;
-    double base_screen_yMin = -(specs.height / 2.0) * specs.pixelStepY;
+    double base_screen_xMin = -(specs.width / 2.0) * specs.pixelStep.real();
+    double base_screen_yMin = -(specs.height / 2.0) * specs.pixelStep.imag();
 
     // ==============================================================================
     // SERIES APPROXIMATION (GLITCH-FREE SKIPPING)
@@ -61,14 +59,14 @@ void PerturbationEngine::processChunkScalar(
     double max_dc_dist = 0.0;
     for (int vx : {0, static_cast<int>(end_px - tile_px)}) {
         for (int vy : {0, static_cast<int>(end_py - tile_py)}) {
-            double dx = base_screen_xMin + ((tile_px + vx) * specs.pixelStepX) - best_dx;
-            double dy = base_screen_yMin + ((tile_py + vy) * specs.pixelStepY) - best_dy;
+            double dx = base_screen_xMin + ((tile_px + vx) * specs.pixelStep.real()) - best_dx;
+            double dy = base_screen_yMin + ((tile_py + vy) * specs.pixelStep.imag()) - best_dy;
             max_dc_dist = std::max(max_dc_dist, std::sqrt(dx*dx + dy*dy));
         }
     }
 
     // Calculate our acceptable error tolerance matching reference math exactly
-    double tolerance = specs.pixelStepX * 0.1;
+    double tolerance = specs.pixelStep.real() * 0.1;
     unsigned int N_skip = 0;
     for (unsigned int i = 1; i < valid_orbit_size; ++i) {
         double b_mag = std::abs(finalOrbitCache[i].B);
@@ -82,15 +80,15 @@ void PerturbationEngine::processChunkScalar(
     core::Pixel* const __restrict__ raw_canvas = back_buf_ref;
 
     // Calculate absolute viewport center coordinates preserving precision
-    double dbl_golden_cx = static_cast<double>(BigFloat(specs.x)) + best_dx;
-    double dbl_golden_cy = static_cast<double>(BigFloat(specs.y)) + best_dy;
+    double dbl_golden_cx = static_cast<double>(BigFloat(specs.reference.real())) + best_dx;
+    double dbl_golden_cy = static_cast<double>(BigFloat(specs.reference.imag())) + best_dy;
 
     for (int py = tile_py; py < end_py; py++) {
         core::Pixel* const row_ptr = raw_canvas + (py * specs.width);
-        double dc_imag = base_screen_yMin + (py * specs.pixelStepY) - best_dy;
+        double dc_imag = base_screen_yMin + (py * specs.pixelStep.imag()) - best_dy;
 
         for (int px = tile_px; px < end_px; px++) {
-            double dc_real = base_screen_xMin + (px * specs.pixelStepX) - best_dx;
+            double dc_real = base_screen_xMin + (px * specs.pixelStep.real()) - best_dx;
 
             double dx = 0.0, dy = 0.0;
             unsigned int iter = 0;
@@ -207,17 +205,17 @@ void PerturbationEngine::processPerturbationJob(job::RenderJob& job) {
     WorkerLocal& local  = getWorkerData();
     //initialize the workerData
     local.init(specs.iterations);
-    BigFloat finalOrbit_r = specs.x;
-    BigFloat finalOrbit_i = specs.y;
+    BigFloat finalOrbit_r = specs.reference.real();
+    BigFloat finalOrbit_i = specs.reference.imag();
     double best_dx = 0.0;
     double best_dy = 0.0;
 
-    if(specs.enableDeltaProbing) {
+    if(true) {
         //init the grid config
         ProbeGridConfig probeCfg(specs);
         //compute the initial reference and publish it (return if job was aborted)
         // SYNCHRONIZATION POINT
-        InitialOrbit* orbitPtr = local.computeInitialOrbit(job,specs.x,specs.y,specs.iterations);
+        InitialOrbit* orbitPtr = local.computeInitialOrbit(job,specs.reference.real(),specs.reference.imag(),specs.iterations);
         if(orbitPtr == nullptr) return; //job aborted
         InitialOrbit& refOrbit = *orbitPtr;
         size_t chunk_id;

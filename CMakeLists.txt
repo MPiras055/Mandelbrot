@@ -55,6 +55,10 @@ target_include_directories(${PROJECT_NAME}
     SYSTEM PRIVATE 
         ${CMAKE_CURRENT_SOURCE_DIR}/deps/boost
 )
+target_compile_options(${PROJECT_NAME} PRIVATE 
+    $<$<CONFIG:Release>:-O3 -march=native -ffast-math>
+    $<$<CXX_COMPILER_ID:GNU,Clang>:-Wno-deprecated-literal-operator>
+)
 
 # =====================================================================
 # 5. COMPILER OPTIMIZATIONS & LINKING

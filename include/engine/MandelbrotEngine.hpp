@@ -2,7 +2,6 @@
 #include <cstdint>
 #include "core/Numeric.hpp"
 #include "concurrency/WorkerPool.hpp"
-#include "engine/job/PerturbationJob.hpp"
 #include "util/ColorUtil.hpp"
 #include "DoubleCanvas.hpp"
 #include "EscapeTimeEngine.hpp"
@@ -36,7 +35,9 @@ public:
 
     /// Request one frame. Any in-flight frame is aborted (newest wins).
     /// @return false if the ring is momentarily full (backpressure) — request dropped.
-    bool requestFrame(const dto::FrameRequest& req);
+    bool requestFrame(const dto::FrameRequest& req) {
+        return dispatch(req);
+    }
 
     /// Blocks until the latest submitted job has drained (completed/aborted).
     void waitFrameDone();
@@ -57,17 +58,18 @@ public:
 private:
     enum class JobStrategy { ETA, PERTURBATION };
 
-    struct TaggedJobSpecs {
-        job::RenderJob::JobSpecs specs;
-        JobStrategy strat;
-    };
-
     static constexpr double ZOOM_ETA_DOUBLE_THRESH = 1e4;
     static constexpr double ZOOM_PTB_THRESH = 1e11;
     static constexpr size_t JOBSTACK_S_DEF = 60;
 
-    TaggedJobSpecs getTaggedJobSpecs(const dto::FrameRequest& req);
-    bool dispatch(TaggedJobSpecs tagged);
+
+    /**
+     * @brief dispatch a new rendering packed in a FrameRequest
+     * @returns: true if the frame was correctly dispatched, false if the dispatch queue is full at the moment
+     * 
+     */
+    bool dispatch(const dto::FrameRequest&);
+    
     void workerRoutine(size_t thread_id);
 
     util::Gradient global_gradient_{

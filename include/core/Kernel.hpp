@@ -18,14 +18,14 @@
 namespace core {
 
     // Tiling granularity: work is diced into 32x32 blocks.
-    inline constexpr unsigned int CHUNK_BLOCK = 32;
+    inline constexpr unsigned int CHUNK_BLOCK = 64;
 
     /**
      * @brief Number of 32x32 tiles covering a width x height render area.
      * @details Single source for both engines' chunk counting (identical to the
      * formula they each used before).
      */
-    inline size_t CalculateTotalChunks(unsigned int width, unsigned int height) noexcept {
+    inline size_t ComputeTotalChunks(unsigned int width, unsigned int height) noexcept {
         size_t blocks_x = (width + (CHUNK_BLOCK - 1)) / CHUNK_BLOCK;
         size_t blocks_y = (height + (CHUNK_BLOCK - 1)) / CHUNK_BLOCK;
         return blocks_x * blocks_y;

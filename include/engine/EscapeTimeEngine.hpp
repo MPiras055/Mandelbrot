@@ -15,6 +15,7 @@ namespace engine {
  * explicitly instantiated in EscapeTimeEngine.cpp.
  */
 class EscapeTimeEngine {
+    static constexpr int TILE_SIZE = core::CHUNK_BLOCK;
 public:
     explicit EscapeTimeEngine(const util::Gradient& gradient, core::Pixel*& back_buf_ref)
         : gradient(gradient), back_buffer(back_buf_ref) {}
@@ -24,8 +25,9 @@ public:
     template<typename F>
     void processEscapeTimeJob(job::RenderJob& job);
 
-    static inline size_t CalculateTotalChunks(unsigned int width, unsigned int height) noexcept {
-        return core::CalculateTotalChunks(width, height);
+    //Return the number of chunks computed based off the width and height
+    static constexpr unsigned int getChunks(unsigned int width, unsigned int height) noexcept {
+        return core::ComputeTotalChunks(width,height);
     }
 
 private:
