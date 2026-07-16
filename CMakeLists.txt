@@ -22,8 +22,10 @@ file(GLOB_RECURSE PROJECT_HEADERS
     "${CMAKE_CURRENT_SOURCE_DIR}/include/*.h"
 )
 
-set(PROJECT_SOURCES 
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/main.cpp"
+# All translation units under src/ (main + the split-out engine components).
+# NOTE: GLOB is resolved at configure time — re-run cmake after adding a new .cpp.
+file(GLOB_RECURSE PROJECT_SOURCES
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp"
 )
 
 # =====================================================================

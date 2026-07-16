@@ -117,7 +117,7 @@ private:
         width_  = std::min(GetScreenWidth(),  static_cast<int>(MAX_WIDTH));
         height_ = std::min(GetScreenHeight(), static_cast<int>(MAX_HEIGHT));
         presenter_->resize(width_, height_);
-        engine_.resizeScreen(uWidth(), uHeight());
+        engine_.resizeCanvas(uWidth(), uHeight());
         // resizeScreen aborts the in-flight frame; it will never arrive, so clear
         // the flag and request a fresh one.
         inFlight_ = false;
