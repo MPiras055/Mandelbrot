@@ -1,46 +1,42 @@
 #pragma once
-#include <raylib.h>
-#include <stdexcept>
-#include <thread>
-#include <vector>
-#include <string>
-#include <cmath>
-// 1. Include the multiprecision library
-#include <boost/multiprecision/cpp_bin_float.hpp>
+#include <cstdint>
+#include <cassert>
 #include "core/Numeric.hpp"
-#include "Camera.hpp"
 #include "concurrency/WorkerPool.hpp"
 #include "engine/job/PerturbationJob.hpp"
 #include "util/ColorUtil.hpp"
+#include "DoubleCanvas.hpp"
 #include "EscapeTimeEngine.hpp"
 #include "PerturbationEngine.hpp"
-#include "util/FrameBuffer.hpp"
 #include "job/RenderJobStack.hpp"
+#include "dto/FrameRequest.hpp"
+#include "dto/FrameView.hpp"
 
 
 namespace engine {
 
 using BigFloat = core::BigFloat;
 
+/**
+ * @brief Pure frame-generation core: takes FrameRequests, produces FrameViews.
+ *
+ * @details The engine is unaware of navigation — it neither owns nor mutates a
+ * camera. The GUI owns the Camera and passes a read-only reference inside each
+ * FrameRequest; the engine derives the complex-plane bounds from it. Rendered
+ * pixels live in a DoubleCanvas (front/back regions sized to the current screen).
+ */
 class MandelbrotEngine {
 
     enum class JobStrategy {ETA, PERTURBATION};
 
-    // 2. Add string payload containers to the TaggedJobSpecs
     struct TaggedJobSpecs {
         job::RenderJob::JobSpecs specs;
         JobStrategy strat;
-        std::string cx_str;
-        std::string cy_str;
     };
 
-    static constexpr double ZOOM_ETA_DOUBLE_THRESH = 1e4;   
-    static constexpr double ZOOM_PTB_THRESH = 1e11;         
-    static constexpr size_t JOBSTACK_S_DEF = 60;   
-
-    
-    
-    
+    static constexpr double ZOOM_ETA_DOUBLE_THRESH = 1e4;
+    static constexpr double ZOOM_PTB_THRESH = 1e11;
+    static constexpr size_t JOBSTACK_S_DEF = 60;
 
     util::Gradient global_gradient_{
         .stops = {
@@ -56,113 +52,96 @@ class MandelbrotEngine {
         .smooth_shading = true,
         .root_scaling = true
     };
-    
+
+    //Double buffer
+    util::DoubleCanvas canvas;
+    //pointer shared with the subEngines
+    core::Pixel* backBuffer_shared;
+    //threadpool
     concurrency::WorkerPool pool;
-
-    // Camera state (center as BigFloat, zoom as double) extracted into its own
-    // entity; MandelbrotEngine forwards the public navigation API to it.
-    Camera cam;
-    bool deltaProbingOn{true};
-
-    uint64_t stampLastFlipped;
-    util::FrameBuffer frontBuffer;
-    size_t frontWidth{0},frontHeight{0};
-    util::FrameBuffer backBuffer;
+    //Job queue
     job::RenderJobStack jobStack;
-    
+    //subEngine ETA
     EscapeTimeEngine etaEngine;
+    //subEngine PTB
     PerturbationEngine ptbEngine;
 
-    static bool getSystemMaxResolution(unsigned int& height, unsigned int& width) {
-        InitWindow(0,0,"SystemProbe");
-        unsigned int maxWidth{},maxHeight{},maxArea{};
-        unsigned int currWidth{},currHeight{},currArea{};
-        for(unsigned int i = 0; i < GetMonitorCount(); i++) {
-            currWidth   = GetMonitorWidth(i);
-            currHeight  = GetMonitorHeight(i);
-            currArea    = currWidth * currHeight;
-            if(currArea > maxArea) {
-                maxWidth    = currWidth;
-                maxHeight   = currHeight;
-                maxArea     = currArea;
-            }
-        }
-        if(maxArea == 0) return false;
-        width    = maxWidth;
-        height   = maxHeight;
-        CloseWindow();
-        return true;
-    }
+    uint64_t stampLastFlipped{0};
 
-    TaggedJobSpecs getTaggedJobSpecs(
-            unsigned int renderHeight, unsigned int renderWidth,
-            unsigned int screenHeight, unsigned int screenWidth,
-            unsigned int iterations
-        ) {
-        double aspect = (double)screenWidth / screenHeight;
-        double mathWidth = 3.0 / cam.currentZoom();
+    /**
+     * @brief Translate a FrameRequest into engine-space job specifications.
+     * @details Reads center/zoom from the request's camera (read-only). Aspect is
+     * taken from the render resolution (a uniform downscale of the screen, so the
+     * ratio matches).
+     */
+    TaggedJobSpecs getTaggedJobSpecs(const dto::FrameRequest& req) {
+        const double zoom = req.camera.currentZoom();
+        double aspect = static_cast<double>(req.renderWidth) / req.renderHeight;
+        double mathWidth = 3.0 / zoom;
         double mathHeight = mathWidth / aspect;
 
         // Downcast to double for ETA Engine absolute bounds (Safe: only used when zoom < 1e14)
-        BigFloat xMin = cam.centerX() - (mathWidth / 2.0);
-        BigFloat yMin = cam.centerY() - (mathHeight / 2.0);
-        double stepX = mathWidth / renderWidth;
-        double stepY = mathHeight / renderHeight;
-        
+        BigFloat xMin = req.camera.centerX() - (mathWidth / 2.0);
+        BigFloat yMin = req.camera.centerY() - (mathHeight / 2.0);
+        double stepX = mathWidth / req.renderWidth;
+        double stepY = mathHeight / req.renderHeight;
+
         job::RenderJob::JobSpecs specs;
-        specs.height             = renderHeight;
-        specs.width              = renderWidth;
-        specs.iterations         = iterations;
+        specs.height             = req.renderHeight;
+        specs.width              = req.renderWidth;
+        specs.iterations         = req.iterations;
         specs.x                  = xMin;
         specs.y                  = yMin;
         specs.pixelStepX         = stepX;
         specs.pixelStepY         = stepY;
-        specs.enableDeltaProbing = deltaProbingOn;
-        
-        JobStrategy strat = cam.currentZoom() < ZOOM_PTB_THRESH ? JobStrategy::ETA : JobStrategy::PERTURBATION;
+        specs.enableDeltaProbing = req.enableDeltaProbing;
+        specs.useFloat           = zoom < ZOOM_ETA_DOUBLE_THRESH;
 
+        JobStrategy strat = zoom < ZOOM_PTB_THRESH ? JobStrategy::ETA : JobStrategy::PERTURBATION;
 
         if (strat == JobStrategy::PERTURBATION) {
-            specs.x = cam.centerX();
-            specs.y = cam.centerY();
+            specs.x = req.camera.centerX();
+            specs.y = req.camera.centerY();
         }
 
-        specs.chunks     = (strat == JobStrategy::ETA ? 
-            EscapeTimeEngine::CalculateTotalChunks(renderWidth, renderHeight) : ptbEngine.CalculateTotalChunks(renderWidth,renderHeight));
-        
+        specs.chunks = (strat == JobStrategy::ETA ?
+            EscapeTimeEngine::CalculateTotalChunks(req.renderWidth, req.renderHeight)
+          : ptbEngine.CalculateTotalChunks(req.renderWidth, req.renderHeight));
+
         return {.specs = specs, .strat = strat};
     }
 
-    bool tryDispatchFrame(TaggedJobSpecs tagged) {
+    bool dispatch(TaggedJobSpecs tagged) {
+        // Bind the current back region to THIS job. Every worker of the job writes
+        // through this captured pointer, so a later harvest flip can never split a
+        // frame across regions or race a shared, re-pointed handle.
+
         bool done = false;
         if(tagged.strat == JobStrategy::ETA) {
-            // Standard ETA dispatch
             done = jobStack.try_push<job::RenderJob::ETAJob>(tagged.specs);
         } else if (tagged.strat == JobStrategy::PERTURBATION) {
-            // 5. VARIADIC DISPATCH: Push the strings into the stack!
             done = jobStack.try_push<job::RenderJob::PTBJob>(tagged.specs);
         } else {
-            assert(false && "tryDispatchFrame: unhandled job strategy");
+            assert(false && "dispatch: unhandled job strategy");
         }
         return done;
     }
 
-    void workerRoutine(size_t thread_id) {
+    void workerRoutine(size_t /*thread_id*/) {
         uint64_t last_version = jobStack.get_latest_job().getStamp();
-        
+
         while(!pool.stopRequested()) {
             auto& job = jobStack.get_latest_job();
             last_version = job.getStamp();
             if (job.done()) {
                 jobStack.wait_for_job(last_version);
-                continue; 
+                continue;
             }
-            
-            if(job.acquire(last_version)) { 
+
+            if(job.acquire(last_version)) {
                 bool wait = false;
                 if (job.holds<job::RenderJob::ETAJob>()) {
-                    bool use_float = cam.currentZoom() < ZOOM_ETA_DOUBLE_THRESH;
-                    if(use_float) 
+                    if(job.getSpecs().useFloat)
                         etaEngine.processEscapeTimeJob<float>(job);
                     else
                         etaEngine.processEscapeTimeJob<double>(job);
@@ -170,95 +149,48 @@ class MandelbrotEngine {
                     ptbEngine.processPerturbationJob(job);
                     wait = ptbEngine.hasToWait();
                 }
-                
+
                 wait? job.release() : job.releaseWait();
-                
-            } else {    
+
+            } else {
                 jobStack.wait_for_job(last_version);
             }
         }
     }
 
     public:
-    void setDeltaProbing(bool deltaProbing) {
-        deltaProbingOn = deltaProbing;
-    }
-    
-
-    MandelbrotEngine(
-        unsigned int initialWidth, unsigned int initialHeight,
-        unsigned int maxWidth, unsigned int maxHeight
-    ) : 
-        stampLastFlipped{0},
-        frontWidth{initialWidth},
-        frontHeight{initialHeight},
-        frontBuffer {maxWidth * maxHeight,initialHeight, initialWidth},
-        backBuffer  {maxWidth * maxHeight, initialHeight, initialWidth},
-        etaEngine(backBuffer,global_gradient_),
-        ptbEngine(backBuffer,global_gradient_),
-        jobStack(JOBSTACK_S_DEF)
+    MandelbrotEngine(unsigned int width, unsigned int height)
+      : canvas(width, height),
+        jobStack(JOBSTACK_S_DEF),
+        backBuffer_shared(canvas.back_ptr()),
+        etaEngine(global_gradient_,backBuffer_shared),
+        ptbEngine(global_gradient_,backBuffer_shared)
     {
         global_gradient_.prepare();
 
         // Spawn workers only now that every collaborator the routine touches
-        // (jobStack, engines, camera) is fully constructed.
+        // (jobStack, engines, canvas) is fully constructed.
         pool.start([this](size_t id) { workerRoutine(id); });
     }
 
-    static MandelbrotEngine create(unsigned int height,unsigned int width) {
-        unsigned int sysWidth{0};
-        unsigned int sysHeight{0};
-        if(!getSystemMaxResolution(sysWidth, sysHeight)) {
-            throw std::runtime_error("");
-        }
-        return MandelbrotEngine(height,width,sysHeight,sysWidth);
-    }
-
     ~MandelbrotEngine() {
-        // Same shutdown sequence as before: flag stop, push a dummy job to wake
-        // any parked workers, then join.
         pool.requestStop();
-        TaggedJobSpecs t;
-        jobStack.try_push<job::PerturbationJob>(t.specs);
+        job::RenderJob::JobSpecs dummy;
+        jobStack.try_push<job::PerturbationJob>(dummy);
         pool.join();
     }
-    
-    // Convert BigFloat back to double ONLY for UI tracking queries
-    double getOffsetX() const { return cam.uiOffsetX(); }
-    double getOffsetY() const { return cam.uiOffsetY(); }
-    double getZoom()    const { return cam.currentZoom(); }
 
-    void pan(float mouseDeltaX, float mouseDeltaY, unsigned int screenWidth, unsigned int screenHeight) {
-        cam.pan(mouseDeltaX, mouseDeltaY, screenWidth, screenHeight);
+    /**
+     * @brief Request one frame. Any in-flight frame is aborted (newest wins).
+     * @return false if the ring is momentarily full (backpressure) — request dropped.
+     */
+    bool requestFrame(const dto::FrameRequest& req) {
+        return dispatch(getTaggedJobSpecs(req));
     }
 
-    void applyZoom(float wheelMove,
-        unsigned int mouseX, unsigned int mouseY,
-        unsigned int screenWidth, unsigned int screenHeight
-    ) {
-        cam.applyZoom(wheelMove, mouseX, mouseY, screenWidth, screenHeight);
-    }
-
-    bool updateCamera() {
-        // The frame-clock read stays at the raylib boundary; Camera itself is
-        // toolkit-independent and consumes the clamped delta.
-        return cam.updateCamera(std::min(GetFrameTime(), 0.1f));
-    }
-
-    bool tryDispatchFrame(
-        unsigned int renderWidth, unsigned int renderHeight,
-        unsigned int screenWidth, unsigned int screenHeight,
-        unsigned int iterations
-    ) {
-        return tryDispatchFrame(
-            getTaggedJobSpecs(
-                renderHeight,renderWidth,
-                screenHeight,screenWidth,
-                iterations
-            )
-        );
-    }
-
+    /**
+     * @brief Blocks until the latest submitted job has drained (completed/aborted).
+     */
     void waitFrameDone() {
         while(!jobStack.is_latest_done()) {
             #if defined(__x86_64__) || defined(_M_X64)
@@ -271,73 +203,54 @@ class MandelbrotEngine {
         }
     }
 
-    void SetPalette(util::Gradient new_gradient) 
-    {
-        jobStack.abort_latest();
-        const auto& lastJob = jobStack.get_latest_job();
-        JobStrategy strat = (lastJob.holds<job::RenderJob::ETAJob>()? JobStrategy::ETA : JobStrategy::PERTURBATION);
-        TaggedJobSpecs tagged {.specs = lastJob.getSpecs(),.strat = strat};
-        waitFrameDone(); 
-        global_gradient_ = std::move(new_gradient);
-        global_gradient_.prepare();
-        tryDispatchFrame(tagged);
-    }
-
-    util::FrameBuffer::View harvestFrame() {
-        // Look at the job that matches our last flipped stamp + 1, 
-        // or look back into the stack history to find the completed frame
+    /**
+     * @brief Harvests the latest completed frame, flipping it to the front.
+     * @return A FrameView with uptodate=true only when a new frame was flipped.
+     * @note The flip is done here on the (single) caller thread while workers are
+     * quiesced on the completed job — see DoubleCanvas's MT-safety note.
+     */
+    dto::FrameView harvestFrame() {
         auto& latestJob = jobStack.get_latest_job();
         const uint64_t latest_stamp = latestJob.getStamp();
-        
-        // Check if the current front buffer is outdated
-        if (stampLastFlipped != latest_stamp) {
-            // Find the specific job context for our pending stamp
-            // If your jobStack allows querying by stamp or checking completion of historical entries:
-            if (latestJob.completed() && latest_stamp > stampLastFlipped) {
-                job::RenderJob::JobSpecs j_specs = latestJob.getSpecs();
-                frontWidth  = j_specs.width;
-                frontHeight = j_specs.height;
-                
-                util::FrameBuffer::swap(frontBuffer, backBuffer);
-                stampLastFlipped = latest_stamp;
-                return frontBuffer.getView(frontHeight, frontWidth, true);
-            }
+        bool upToDate = false;
+
+        if (latest_stamp > stampLastFlipped && latestJob.completed()) {
+            upToDate = true;
+            job::RenderJob::JobSpecs j_specs = latestJob.getSpecs();
+            canvas.swap(j_specs.width, j_specs.height); //swap backBuffer with the frontBuffer
+            backBuffer_shared = canvas.back_ptr();
+            stampLastFlipped = latest_stamp;
         }
-        
-        return frontBuffer.getView(frontHeight, frontWidth, false);
-    }
-
-    static constexpr double getPerturbationThreshold() {
-        return ZOOM_PTB_THRESH;
-    }
-
-    static constexpr double getEscapeTimeDoubleThreshold() {
-        return ZOOM_ETA_DOUBLE_THRESH;
+        return canvas.front_view(upToDate);
     }
 
     /**
-        * @brief Resets the camera space variables immediately to their initial state.
-        */
-    void resetCamera() { cam.reset(); }
-
-    // Preserve the MandelbrotEngine::CameraSnapshot name (the GUI's undo history is
-    // typed on it); the type itself now lives in Camera.
-    using CameraSnapshot = Camera::Snapshot;
-
-    /**
-        * @brief Instantly snaps the camera to a snapshot, bypassing linear damping.
-        */
-    void warpCamera(const CameraSnapshot& snap) { cam.warp(snap); }
-
-    /**
-        * @brief Calculates target snapshot from a screen bounding box WITHOUT modifying state.
-        */
-    CameraSnapshot calculateBoxSnapshot(unsigned int x1, unsigned int y1, unsigned int x2, unsigned int y2,
-                                        unsigned int screenW, unsigned int screenH) const {
-        return cam.calculateBoxSnapshot(x1, y1, x2, y2, screenW, screenH);
+     * @brief Reallocates the canvas to a new screen size (window resize).
+     * @warning Drains the current job first; call only from the GUI thread.
+     */
+    void resizeScreen(unsigned int width, unsigned int height) {
+        jobStack.abort_latest();
+        waitFrameDone();
+        canvas.resize_screen(width, height);
+        backBuffer_shared = canvas.back_ptr();
+        // The next dispatch binds its target to the freshly-allocated back region.
+        // Nothing valid is on-screen; don't let harvest flip the aborted job.
+        stampLastFlipped = jobStack.get_latest_job().getStamp();
     }
 
-    CameraSnapshot getCurrentSnapshot() const { return cam.currentSnapshot(); }
+    void SetPalette(util::Gradient new_gradient) {
+        jobStack.abort_latest();
+        const auto& lastJob = jobStack.get_latest_job();
+        JobStrategy strat = (lastJob.holds<job::RenderJob::ETAJob>() ? JobStrategy::ETA : JobStrategy::PERTURBATION);
+        TaggedJobSpecs tagged{ .specs = lastJob.getSpecs(), .strat = strat };
+        waitFrameDone();
+        global_gradient_ = std::move(new_gradient);
+        global_gradient_.prepare();
+        dispatch(tagged);
+    }
+
+    static constexpr double getPerturbationThreshold() { return ZOOM_PTB_THRESH; }
+    static constexpr double getEscapeTimeDoubleThreshold() { return ZOOM_ETA_DOUBLE_THRESH; }
 };
-    
+
 } // namespace engine

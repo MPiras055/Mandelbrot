@@ -144,7 +144,7 @@ public:
      * @brief: aborts the current job and wakes up all threads
      */
     inline void abort_latest() {
-        buffer[tail.load(std::memory_order_acquire)].abort();
+        buffer[tail.load(std::memory_order_acquire) % size_].abort();
         tail.notify_all();
     }
 };

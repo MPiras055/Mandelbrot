@@ -4,6 +4,7 @@
 #include <boost/multiprecision/cpp_bin_float.hpp>
 #include <cassert>
 #include "core/Numeric.hpp"
+#include "core/Pixel.hpp"
 #include "../util/TaggedReferenceCounter.hpp"
 #include "../job/EscapeTimeJob.hpp"
 #include "../job/PerturbationJob.hpp"
@@ -36,6 +37,9 @@ namespace engine::job {
             double pixelStepY{0.0};
             size_t chunks{0};
             bool enableDeltaProbing{true}; // NEW: Toggle flag for Delta Probing
+            // ETA float-vs-double lane width, decided at dispatch (from zoom) so
+            // the worker routine no longer needs to read the camera.
+            bool useFloat{true};
         };
 
         using ETAJob = EscapeTimeJob;

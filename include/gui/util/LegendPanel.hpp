@@ -13,7 +13,7 @@ namespace gui::util {
     public:
         bool isOpen{true};
 
-        bool Draw(int screenW, float scale, const engine::MandelbrotEngine& eng, bool isRefining, float redTimer) {
+        bool Draw(int screenW, float scale, double zoom, bool isRefining, float redTimer) {
             if (IsKeyPressed(KEY_L)) isOpen = !isOpen;
             if (!isOpen) return false;
 
@@ -30,7 +30,7 @@ namespace gui::util {
             DrawText(TextFormat("FPS: %i", GetFPS()), static_cast<int>(x + 10*scale), ty, fs, UITheme::AccentActive);
 
             ty += static_cast<int>(20 * scale);
-            double z = eng.getZoom();
+            const double z = zoom;
             DrawText(TextFormat("Zoom: 1e%.1f %s", std::log10(z), z > engine::MandelbrotEngine::getPerturbationThreshold() ? "(PTB)" : "(ETA)"),
                      static_cast<int>(x + 10*scale), ty, fs, z > engine::MandelbrotEngine::getPerturbationThreshold() ? ORANGE : SKYBLUE);
 

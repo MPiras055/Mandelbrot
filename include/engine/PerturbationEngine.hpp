@@ -6,7 +6,6 @@
 #include "core/Numeric.hpp"
 #include "core/Kernel.hpp"
 #include "macro_util.hpp"
-#include "util/FrameBuffer.hpp"
 #include "util/ColorUtil.hpp"
 #include <optional>
 #include "job/RenderJob.hpp"
@@ -24,6 +23,7 @@ class PerturbationEngine {
     static constexpr size_t PROBE_MCOL = 128;
     static constexpr size_t PROBE_CELL_CHUNK = 128; 
     static constexpr size_t MAX_WORKERS = 128;
+    core::Pixel*& back_buf_ref;
 
     /**
      * configuration struct for the matrix processing
@@ -310,8 +310,6 @@ class PerturbationEngine {
 
     };
 
-    //reference to the MandelbrotEngine backBuffer
-    util::FrameBuffer& backBuffer;
     const util::Gradient& gradient;
     //index for next slot in workerDataForDealloc
     std::atomic<size_t> dealloc_idx__{0};
@@ -320,10 +318,11 @@ class PerturbationEngine {
 
     WorkerLocal& getWorkerData() {
         static thread_local WorkerLocal* ptr = [this]() {
+            const size_t my_idx = dealloc_idx__.fetch_add(1ul, std::memory_order_relaxed);
             assert(my_idx < MAX_WORKERS && "Exceeded MAX_WORKERS allocation limits!");
             WorkerLocal* allocated = new WorkerLocal();
             //register for deallocation
-            dealloc__[dealloc_idx__.fetch_add(1ul, std::memory_order_relaxed)] = allocated;
+            dealloc__[my_idx] = allocated;
             return allocated;
         }();
 
@@ -398,7 +397,7 @@ class PerturbationEngine {
         // ==============================================================================
         // MAIN PIXEL RENDERING LOOP
         // ==============================================================================
-        core::Pixel* const __restrict__ raw_canvas = backBuffer.data();
+        core::Pixel* const __restrict__ raw_canvas = back_buf_ref;
 
         // Calculate absolute viewport center coordinates preserving precision
         double dbl_golden_cx = static_cast<double>(BigFloat(specs.x)) + best_dx;
@@ -544,8 +543,8 @@ public:
     }
     
 
-    PerturbationEngine(util::FrameBuffer& fbuffer, const util::Gradient& gradient):
-        backBuffer(fbuffer), gradient(gradient) {}
+    explicit PerturbationEngine(const util::Gradient& gradient, core::Pixel*& back_buf_ref):
+        gradient(gradient),back_buf_ref(back_buf_ref) {}
 
 
     /**

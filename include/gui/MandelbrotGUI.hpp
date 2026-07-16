@@ -2,255 +2,277 @@
 #include <raylib.h>
 #include <algorithm>
 #include <cmath>
+#include <optional>
+#include <utility>
 #include <vector>
-#include <macro_util.hpp>
-#include "engine/MandelbrotEngine.hpp"
+#include <engine/MandelbrotEngine.hpp>
+#include <engine/Camera.hpp>
 #include "RenderSettings.hpp"
-#include "util/UITheme.hpp"
+#include "Presenter.hpp"
 #include "util/SettingsSidebar.hpp"
 #include "util/LegendPanel.hpp"
 
 namespace gui {
 
-// ============================================================================
-// MAIN RAYLIB GUI FRONTEND
-// ============================================================================
+/**
+ * @brief Application front-end: window, input, and the render loop.
+ *
+ * @details Concerns are split so each is independently understandable:
+ *   - engine::MandelbrotEngine  — CPU frame generation (owns the pixels).
+ *   - engine::Camera            — viewport state; the GUI owns and drives it.
+ *   - gui::Presenter            — all GPU/raylib display state (textures, shader).
+ *   - SettingsSidebar / LegendPanel — the two on-screen widgets.
+ *   - GUI (this class)          — glues them together and runs the loop.
+ *
+ * The render loop is a small state machine over two resolutions:
+ *   - while navigating: render a fast, low-res PREVIEW (renderScale = upscale).
+ *   - once settled:     render one sharp FULL-RES pass (renderScale = 1).
+ * Only one frame is computed at a time (`inFlight`); a settle may preempt an
+ * in-flight preview so refinement starts immediately.
+ */
 class GUI {
-private:
-    static constexpr unsigned int MAX_WIDTH = 3840, MAX_HEIGHT = 2160;
-
-    int width{1080}, height{720}; 
-    float uiScale{1.0f};
-    bool uiHidden{false};
-
-    Texture2D tex_hires{}, tex_lores{};  
-    Texture2D* active_tex{nullptr}; 
-
-    RenderTexture2D screen_target{}; 
-    Shader diffusion_shader{};       
-    int screen_size_loc{-1};         
-    bool diffusion_active{true};     
-
-    engine::MandelbrotEngine engine;
-
-    util::LegendPanel legend;
-    util::SettingsSidebar sidebar;
-
-    std::vector<engine::MandelbrotEngine::CameraSnapshot> historyStack;
-    float redAlertTimer{0.0f}; 
-
-    bool needsUpdate{false}, isComputing{false}, wasInteracting{false};
-    float renderScale{1.0f};
-    int currentlyComputingScale{1};
-    
-    bool isBoxSelecting{false};
-    Vector2 boxStart{0,0}, boxEnd{0,0};
-
-    void ReallocateGPUTextures(int newW, int newH) {
-        if (tex_hires.id != 0) UnloadTexture(tex_hires); if (tex_lores.id != 0) UnloadTexture(tex_lores);
-        if (screen_target.id != 0) UnloadRenderTexture(screen_target);
-
-        int lo_w = std::max(1, static_cast<int>(newW / sidebar.settings.upscaleFactor));
-        int lo_h = std::max(1, static_cast<int>(newH / sidebar.settings.upscaleFactor));
-
-        Image img_hi = GenImageColor(newW, newH, BLANK), img_lo = GenImageColor(lo_w, lo_h, BLANK);
-        tex_hires = LoadTextureFromImage(img_hi); tex_lores = LoadTextureFromImage(img_lo);
-        UnloadImage(img_hi); UnloadImage(img_lo);
-
-        SetTextureFilter(tex_hires, TEXTURE_FILTER_POINT); SetTextureFilter(tex_lores, TEXTURE_FILTER_BILINEAR);
-        screen_target = LoadRenderTexture(newW, newH);
-        SetTextureFilter(screen_target.texture, TEXTURE_FILTER_BILINEAR);
-        active_tex = &tex_hires;
-    }
-
-    bool IsMouseOverUI(Vector2 m) const {
-        if (uiHidden) return false;
-        if (sidebar.isOpen && CheckCollisionPointRec(m, sidebar.GetBoundingBox(uiScale))) return true;
-        if (legend.isOpen) {
-            float lw = 240 * uiScale, lh = 135 * uiScale, lx = width - lw - (15 * uiScale);
-            if (CheckCollisionPointRec(m, {lx, 15*uiScale, lw, lh})) return true;
-        }
-        return false;
-    }
-
-    void HandleInput() {
-        bool inputActive = false;
-        Vector2 mousePos = GetMousePosition();
-        bool ctrl = IsKeyDown(KEY_LEFT_CONTROL) || IsKeyDown(KEY_RIGHT_CONTROL);
-
-        // 1. UI Hiding Override (Ctrl + H)
-        if (ctrl && IsKeyPressed(KEY_H)) uiHidden = !uiHidden;
-
-        // 2. Global UI Scaling & Undo
-        if (ctrl && !uiHidden) {
-            bool plus  = IsKeyPressed(KEY_EQUAL) || IsKeyPressed(KEY_KP_ADD)      || IsKeyPressed(KEY_RIGHT_BRACKET);
-            bool minus = IsKeyPressed(KEY_MINUS) || IsKeyPressed(KEY_KP_SUBTRACT) || IsKeyPressed(KEY_SLASH);
-
-            if (plus)  uiScale = std::min(2.5f, uiScale + 0.15f);
-            if (minus) uiScale = std::max(0.6f, uiScale - 0.15f);
-
-            if (IsKeyPressed(KEY_Z)) {
-                if (!sidebar.allowDragging && !historyStack.empty()) {
-                    engine.warpCamera(historyStack.back());
-                    historyStack.pop_back();
-                    isBoxSelecting = false; needsUpdate = true;
-                } else if (!sidebar.allowDragging && historyStack.empty()) {
-                    redAlertTimer = 1.5f; 
-                }
-            }
-        }
-
-        if (sidebar.allowDragging && !historyStack.empty()) historyStack.clear();
-
-        // 3. Canvas Navigation
-        bool overUI = IsMouseOverUI(mousePos);
-
-        if (sidebar.allowDragging) {
-            if (IsMouseButtonDown(MOUSE_BUTTON_LEFT) && !overUI) {
-                Vector2 d = GetMouseDelta();
-                if (d.x != 0 || d.y != 0) { engine.pan(d.x, d.y, width, height); inputActive = true; }
-            }
-        } else {
-            if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && !overUI) {
-                isBoxSelecting = true; boxStart = mousePos; boxEnd = mousePos;
-            }
-            if (isBoxSelecting) {
-                if (IsMouseButtonDown(MOUSE_BUTTON_LEFT)) boxEnd = mousePos;
-                if (IsMouseButtonReleased(MOUSE_BUTTON_LEFT)) {
-                    isBoxSelecting = false;
-                    if (std::abs(boxEnd.x - boxStart.x) > 6 && std::abs(boxEnd.y - boxStart.y) > 6) {
-                        historyStack.push_back(engine.getCurrentSnapshot());
-                        engine.warpCamera(engine.calculateBoxSnapshot(boxStart.x, boxStart.y, boxEnd.x, boxEnd.y, width, height));
-                        needsUpdate = true;
-                    }
-                }
-            }
-        }
-
-        float wheel = GetMouseWheelMove() * 0.1f; 
-        if (wheel != 0.0f && !ctrl) {
-            engine.applyZoom(wheel, mousePos.x, mousePos.y, width, height);
-            inputActive = true;
-        }
-
-        bool cameraMoving = engine.updateCamera();
-        if (inputActive || cameraMoving) {
-            renderScale = sidebar.settings.upscaleFactor; needsUpdate = true; wasInteracting = true;
-        } else if (wasInteracting) {
-            renderScale = 1.0f; needsUpdate = true; wasInteracting = false; 
-        }
-    }
-
-    void LoadDiffusionShader() {
-        const char* code = R"(
-            #version 330
-            in vec2 fragTexCoord; in vec4 fragColor; uniform sampler2D texture0; uniform vec2 screenSize; out vec4 finalColor;
-            void main() {
-                vec2 o = (1.0 / screenSize) * 1.0; vec4 c = texture(texture0, fragTexCoord) * 0.226943;
-                c += texture(texture0, fragTexCoord + vec2(o.x, 0)) * 0.133221 + texture(texture0, fragTexCoord + vec2(-o.x, 0)) * 0.133221;
-                c += texture(texture0, fragTexCoord + vec2(0, o.y)) * 0.133221 + texture(texture0, fragTexCoord + vec2(0, -o.y)) * 0.133221;
-                c += texture(texture0, fragTexCoord + vec2(o.x, o.y)) * 0.085316 + texture(texture0, fragTexCoord + vec2(-o.x, o.y)) * 0.085316;
-                c += texture(texture0, fragTexCoord + vec2(o.x, -o.y)) * 0.085316 + texture(texture0, fragTexCoord + vec2(-o.x, -o.y)) * 0.085316;
-                finalColor = c * fragColor;
-            }
-        )";
-        diffusion_shader = LoadShaderFromMemory(nullptr, code);
-        screen_size_loc = GetShaderLocation(diffusion_shader, "screenSize");
-    }
-
 public:
-    GUI(int startW, int startH) : width(startW), height(startH), engine{engine::MandelbrotEngine::create(startH, startW)} {
+    GUI(int startW, int startH)
+        : width_(startW), height_(startH),
+          engine_(static_cast<unsigned>(startW), static_cast<unsigned>(startH)) {
         SetConfigFlags(FLAG_WINDOW_RESIZABLE);
-        InitWindow(width, height, "Mandelbrot Engine");
-        SetTargetFPS(60); 
+        InitWindow(width_, height_, "Mandelbrot Engine");
+        SetTargetFPS(60);
+        presenter_.emplace(width_, height_);
 
-        ReallocateGPUTextures(width, height);
-        LoadDiffusionShader();
-
-        engine.tryDispatchFrame(width, height, width, height, sidebar.settings.activeRefiningIters);
-        engine.waitFrameDone(); 
-        (void)engine.harvestFrame();
+        // Render the first (full-res) frame synchronously so the window opens with
+        // a picture. Mark it in-flight so the first harvest uploads and clears it.
+        engine_.requestFrame({ cam_, uWidth(), uHeight(), sidebar_.settings.activeRefiningIters });
+        engine_.waitFrameDone();
+        inFlight_ = true;
     }
 
     ~GUI() {
-        if (tex_hires.id != 0) UnloadTexture(tex_hires); if (tex_lores.id != 0) UnloadTexture(tex_lores);
-        if (screen_target.id != 0) UnloadRenderTexture(screen_target);
-        UnloadShader(diffusion_shader); CloseWindow();
+        presenter_.reset();   // free GPU resources before the GL context dies
+        CloseWindow();
     }
 
     void Run() {
         while (!WindowShouldClose()) {
-            if (redAlertTimer > 0.0f) redAlertTimer -= GetFrameTime();
+            if (redAlertTimer_ > 0.0f) redAlertTimer_ -= GetFrameTime();
 
-            if (IsWindowResized()) {
-                width = std::min(GetScreenWidth(), static_cast<int>(MAX_WIDTH));
-                height = std::min(GetScreenHeight(), static_cast<int>(MAX_HEIGHT));
-                ReallocateGPUTextures(width, height); needsUpdate = true;
-            }
+            handleInput();       // navigation + hotkeys -> camera, renderScale, needsUpdate
+            handleResize();      // window resize -> textures + canvas
+            harvestAndUpload();  // pull a finished frame from the engine, upload to GPU
+            scheduleRender();    // request the next frame if needed
 
-            int renderW = std::max(1, static_cast<int>(width / renderScale));
-            int renderH = std::max(1, static_cast<int>(height / renderScale));
-
-            // 1. HARVEST
-            auto frame = engine.harvestFrame();
-            if (frame.uptodate) {
-                UpdateTexture(frame.width == static_cast<size_t>(width) ? tex_hires : tex_lores, frame.pixels);
-                active_tex = frame.width == static_cast<size_t>(width) ? &tex_hires : &tex_lores;
-                isComputing = false; 
-            }
-
-            // 2. DISPATCH
-            if (needsUpdate) {
-                bool isFullRes = (renderScale == 1.0f);
-                if (isFullRes && sidebar.settings.disableRefinement) {
-                    needsUpdate = false;
-                } else {
-                    bool overridePreempt = isComputing && (currentlyComputingScale > 1) && isFullRes;
-                    if (!isComputing || overridePreempt) {
-                        unsigned int iters = isFullRes ? sidebar.settings.activeRefiningIters : sidebar.settings.panningIters;
-                        if (engine.tryDispatchFrame(renderW, renderH, width, height, iters)) {
-                            isComputing = true; needsUpdate = false; currentlyComputingScale = static_cast<int>(renderScale);
-                        }
-                    }
-                }
-            }
-
-            // 3. RENDER SCENE
-            BeginTextureMode(screen_target);
-                ClearBackground(BLACK);
-                if (active_tex) DrawTexturePro(*active_tex, {0,0,(float)active_tex->width,(float)active_tex->height}, {0,0,(float)width,(float)height}, {0,0}, 0, WHITE);
-            EndTextureMode();
+            presenter_->composite();   // frame -> offscreen target (outside BeginDrawing)
 
             BeginDrawing();
                 ClearBackground(BLACK);
-                Rectangle fboRec = {0, 0, (float)screen_target.texture.width, -(float)screen_target.texture.height};
-                if (diffusion_active) {
-                    float res[2] = {(float)width, (float)height};
-                    SetShaderValue(diffusion_shader, screen_size_loc, res, SHADER_UNIFORM_VEC2);
-                    BeginShaderMode(diffusion_shader); DrawTexturePro(screen_target.texture, fboRec, {0,0,(float)width,(float)height}, {0,0}, 0, WHITE); EndShaderMode();
-                } else {
-                    DrawTexturePro(screen_target.texture, fboRec, {0,0,(float)width,(float)height}, {0,0}, 0, WHITE);
-                }
-
-                if (!uiHidden) {
-                    bool isRefining = isComputing && (currentlyComputingScale == 1);
-                    bool triggerReset = legend.Draw(width, uiScale, engine, isRefining, redAlertTimer);
-                    auto sRes = sidebar.Draw(uiScale);
-
-                    if (triggerReset)                 { engine.resetCamera(); historyStack.clear(); needsUpdate = true; }
-                    if (sRes.needsInstantRerender)    { ReallocateGPUTextures(width, height); needsUpdate = true; }
-                    if (sRes.applyIterationsClicked)  { needsUpdate = true; } // Trigger high-res re-render on Apply click
-
-                    if (isBoxSelecting && !sidebar.allowDragging) {
-                        float bx = std::min(boxStart.x, boxEnd.x), by = std::min(boxStart.y, boxEnd.y);
-                        float bw = std::abs(boxEnd.x - boxStart.x), bh = std::abs(boxEnd.y - boxStart.y);
-                        DrawRectangleRec({bx, by, bw, bh}, Color{0, 190, 255, 45});
-                        DrawRectangleLinesEx({bx, by, bw, bh}, 1.5f, Color{0, 190, 255, 220});
-                    }
-                }
-
-                HandleInput(); 
+                presenter_->blitToScreen();   // target -> window (+ diffusion shader)
+                if (!uiHidden_) drawUI();
             EndDrawing();
+        }
+    }
+
+private:
+    // ---- Window / screen ---------------------------------------------------
+    static constexpr unsigned MAX_WIDTH = 3840, MAX_HEIGHT = 2160;
+    int width_, height_;
+    float uiScale_{1.0f};
+    bool  uiHidden_{false};
+
+    unsigned uWidth()  const { return static_cast<unsigned>(width_); }
+    unsigned uHeight() const { return static_cast<unsigned>(height_); }
+
+    // ---- Core collaborators ------------------------------------------------
+    engine::MandelbrotEngine engine_;
+    engine::Camera           cam_;                 // GUI owns navigation
+    std::optional<Presenter> presenter_;           // built after InitWindow
+
+    util::SettingsSidebar sidebar_;
+    util::LegendPanel     legend_;
+
+    // ---- Navigation history (box-zoom undo) --------------------------------
+    std::vector<engine::Camera::Snapshot> historyStack_;
+    float redAlertTimer_{0.0f};                    // "no history" flash
+    bool  isBoxSelecting_{false};
+    Vector2 boxStart_{0, 0}, boxEnd_{0, 0};
+
+    // ---- Render scheduling state ------------------------------------------
+    bool  needsUpdate_{false};   // a (re)dispatch is wanted
+    bool  inFlight_{false};      // a frame is currently being computed
+    float renderScale_{1.0f};    // 1 = full-res, >1 = downscaled preview
+    float inFlightScale_{1.0f};  // scale of the in-flight frame
+    bool  wasMoving_{false};     // edge-detect the moving -> settled transition
+
+    // Render resolution for the current scale (a uniform downscale of the window).
+    std::pair<unsigned, unsigned> renderDims() const {
+        return { static_cast<unsigned>(std::max(1, static_cast<int>(width_  / renderScale_))),
+                 static_cast<unsigned>(std::max(1, static_cast<int>(height_ / renderScale_))) };
+    }
+
+    // ========================================================================
+    // Render loop steps
+    // ========================================================================
+
+    void handleResize() {
+        if (!IsWindowResized()) return;
+        width_  = std::min(GetScreenWidth(),  static_cast<int>(MAX_WIDTH));
+        height_ = std::min(GetScreenHeight(), static_cast<int>(MAX_HEIGHT));
+        presenter_->resize(width_, height_);
+        engine_.resizeScreen(uWidth(), uHeight());
+        // resizeScreen aborts the in-flight frame; it will never arrive, so clear
+        // the flag and request a fresh one.
+        inFlight_ = false;
+        needsUpdate_ = true;
+    }
+
+    void harvestAndUpload() {
+        auto frame = engine_.harvestFrame();
+        if (frame.uptodate) {
+            presenter_->upload(frame);
+            inFlight_ = false;
+        }
+    }
+
+    void scheduleRender() {
+        if (!needsUpdate_) return;
+
+        const bool fullRes = (renderScale_ == 1.0f);
+        if (fullRes && sidebar_.settings.disableRefinement) {
+            needsUpdate_ = false;   // refinement disabled: keep the preview
+            return;
+        }
+
+        // One frame at a time, except a settle may preempt an in-flight preview.
+        const bool preemptsPreview = inFlight_ && inFlightScale_ > 1.0f && fullRes;
+        if (inFlight_ && !preemptsPreview) return;
+
+        auto [rw, rh] = renderDims();
+        const unsigned iters = fullRes ? sidebar_.settings.activeRefiningIters
+                                       : sidebar_.settings.panningIters;
+        if (engine_.requestFrame({ cam_, rw, rh, iters })) {
+            inFlight_      = true;
+            inFlightScale_ = renderScale_;
+            needsUpdate_   = false;
+        }
+    }
+
+    // ========================================================================
+    // Input
+    // ========================================================================
+
+    void handleInput() {
+        const Vector2 mouse = GetMousePosition();
+        const bool ctrl = IsKeyDown(KEY_LEFT_CONTROL) || IsKeyDown(KEY_RIGHT_CONTROL);
+
+        if (ctrl && IsKeyPressed(KEY_H)) uiHidden_ = !uiHidden_;
+        if (ctrl && !uiHidden_) handleUiScaleAndUndo();
+
+        // Box-zoom history only exists while dragging is OFF.
+        if (sidebar_.allowDragging && !historyStack_.empty()) historyStack_.clear();
+
+        bool moved = false;
+        const bool overUI = isMouseOverUI(mouse);
+        if (sidebar_.allowDragging) moved |= handlePan(mouse, overUI);
+        else                        handleBoxSelect(mouse, overUI);
+        moved |= handleZoom(mouse, ctrl);
+
+        // Advance the damped camera and translate motion into a render request.
+        const bool animating = cam_.updateCamera(std::min(GetFrameTime(), 0.1f));
+        if (moved || animating) {
+            renderScale_ = sidebar_.settings.upscaleFactor;   // fast preview
+            needsUpdate_ = true;
+            wasMoving_   = true;
+        } else if (wasMoving_) {
+            renderScale_ = 1.0f;                              // settled: sharp pass
+            needsUpdate_ = true;
+            wasMoving_   = false;
+        }
+    }
+
+    void handleUiScaleAndUndo() {
+        if (IsKeyPressed(KEY_EQUAL) || IsKeyPressed(KEY_KP_ADD)      || IsKeyPressed(KEY_RIGHT_BRACKET))
+            uiScale_ = std::min(2.5f, uiScale_ + 0.15f);
+        if (IsKeyPressed(KEY_MINUS) || IsKeyPressed(KEY_KP_SUBTRACT) || IsKeyPressed(KEY_SLASH))
+            uiScale_ = std::max(0.6f, uiScale_ - 0.15f);
+
+        if (IsKeyPressed(KEY_Z) && !sidebar_.allowDragging) {
+            if (!historyStack_.empty()) {
+                cam_.warp(historyStack_.back());
+                historyStack_.pop_back();
+                isBoxSelecting_ = false;
+                needsUpdate_ = true;
+            } else {
+                redAlertTimer_ = 1.5f;   // nothing to undo
+            }
+        }
+    }
+
+    // Drag to pan. Returns true if the camera target moved.
+    bool handlePan(Vector2 mouse, bool overUI) {
+        if (IsMouseButtonDown(MOUSE_BUTTON_LEFT) && !overUI) {
+            Vector2 d = GetMouseDelta();
+            if (d.x != 0 || d.y != 0) {
+                cam_.pan(d.x, d.y, width_, height_);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // Drag a rectangle to zoom into it (records an undo snapshot).
+    void handleBoxSelect(Vector2 mouse, bool overUI) {
+        if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && !overUI) {
+            isBoxSelecting_ = true; boxStart_ = mouse; boxEnd_ = mouse;
+        }
+        if (!isBoxSelecting_) return;
+
+        if (IsMouseButtonDown(MOUSE_BUTTON_LEFT)) boxEnd_ = mouse;
+        if (IsMouseButtonReleased(MOUSE_BUTTON_LEFT)) {
+            isBoxSelecting_ = false;
+            if (std::abs(boxEnd_.x - boxStart_.x) > 6 && std::abs(boxEnd_.y - boxStart_.y) > 6) {
+                historyStack_.push_back(cam_.currentSnapshot());
+                cam_.warp(cam_.calculateBoxSnapshot(boxStart_.x, boxStart_.y,
+                                                    boxEnd_.x, boxEnd_.y, width_, height_));
+                needsUpdate_ = true;
+            }
+        }
+    }
+
+    // Wheel to zoom toward the cursor. Returns true if it zoomed.
+    bool handleZoom(Vector2 mouse, bool ctrl) {
+        const float wheel = GetMouseWheelMove() * 0.1f;
+        if (wheel == 0.0f || ctrl) return false;
+        cam_.applyZoom(wheel, mouse.x, mouse.y, width_, height_);
+        return true;
+    }
+
+    bool isMouseOverUI(Vector2 m) const {
+        if (uiHidden_) return false;
+        if (sidebar_.isOpen && CheckCollisionPointRec(m, sidebar_.GetBoundingBox(uiScale_))) return true;
+        if (legend_.isOpen) {
+            const float lw = 240 * uiScale_, lh = 135 * uiScale_, lx = width_ - lw - (15 * uiScale_);
+            if (CheckCollisionPointRec(m, { lx, 15 * uiScale_, lw, lh })) return true;
+        }
+        return false;
+    }
+
+    // ========================================================================
+    // UI overlay (drawn inside BeginDrawing)
+    // ========================================================================
+
+    void drawUI() {
+        const bool refining = inFlight_ && inFlightScale_ == 1.0f;
+        const bool reset = legend_.Draw(width_, uiScale_, cam_.currentZoom(), refining, redAlertTimer_);
+        const auto s = sidebar_.Draw(uiScale_);
+
+        if (reset)                   { cam_.reset(); historyStack_.clear(); needsUpdate_ = true; }
+        if (s.needsInstantRerender)  { needsUpdate_ = true; }  // Presenter resizes textures on upload
+        if (s.applyIterationsClicked){ needsUpdate_ = true; }
+
+        if (isBoxSelecting_ && !sidebar_.allowDragging) {
+            const float bx = std::min(boxStart_.x, boxEnd_.x), by = std::min(boxStart_.y, boxEnd_.y);
+            const float bw = std::abs(boxEnd_.x - boxStart_.x), bh = std::abs(boxEnd_.y - boxStart_.y);
+            DrawRectangleRec({ bx, by, bw, bh }, Color{ 0, 190, 255, 45 });
+            DrawRectangleLinesEx({ bx, by, bw, bh }, 1.5f, Color{ 0, 190, 255, 220 });
         }
     }
 };
