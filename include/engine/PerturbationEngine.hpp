@@ -9,7 +9,6 @@
 #include <boost/multiprecision/cpp_bin_float.hpp>
 #include "core/Numeric.hpp"
 #include "core/Kernel.hpp"
-#include "macro_util.hpp"
 #include "util/ColorUtil.hpp"
 #include "job/RenderJob.hpp"
 #include "util/LazyVector.hpp"
@@ -34,6 +33,9 @@ class PerturbationEngine {
     static constexpr size_t PROBE_MROW = 128;
     static constexpr size_t PROBE_MCOL = 128;
     static constexpr size_t PROBE_CELL_CHUNK = 128;
+    // Number of *chunks* the probe grid is diced into (each covers PROBE_CELL_CHUNK
+    // cells). Claiming this many — not the cell count — avoids ~16k no-op claims/frame.
+    static constexpr size_t PROBE_CHUNKS = (PROBE_MROW * PROBE_MCOL + PROBE_CELL_CHUNK - 1) / PROBE_CELL_CHUNK;
     static constexpr size_t MAX_WORKERS = 128;
     core::Pixel*& back_buf_ref;
 
@@ -293,7 +295,6 @@ class PerturbationEngine {
             unsigned int iterations,
             size_t chunk_idx
         ) {
-            puts("PROBING");
             // Calculate the linear bounds for this specific chunk
             size_t start_cell = chunk_idx * PROBE_CELL_CHUNK;
             size_t total_cells = PROBE_MROW * PROBE_MCOL;

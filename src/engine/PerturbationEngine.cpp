@@ -219,14 +219,14 @@ void PerturbationEngine::processPerturbationJob(job::RenderJob& job) {
         if(orbitPtr == nullptr) return; //job aborted
         InitialOrbit& refOrbit = *orbitPtr;
         size_t chunk_id;
-        while(jobState.getProbeChunk(PROBE_MROW * PROBE_MCOL, chunk_id)) {
+        while(jobState.getProbeChunk(PROBE_CHUNKS, chunk_id)) {
             (void)local.computeProbeChunk(job,probeCfg,refOrbit,specs.iterations,chunk_id);
             jobState.markCompletedProbe();
         }
         if(job.aborted()) return;
 
         //spin wait for all threads to finish the probing
-        while(!jobState.probeCompleted(PROBE_MROW * PROBE_MCOL)) {
+        while(!jobState.probeCompleted(PROBE_CHUNKS)) {
             cpu_relax();
         }
         if(job.aborted()) return;
