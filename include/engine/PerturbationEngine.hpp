@@ -1,17 +1,13 @@
 #pragma once
-#include <array>
 #include <atomic>
-#include <complex>
-#include <optional>
 #include <cassert>
 #include <cstdio>
-#include <algorithm>
-#include <boost/multiprecision/cpp_bin_float.hpp>
 #include "core/Numeric.hpp"
 #include "core/Kernel.hpp"
 #include "util/ColorUtil.hpp"
 #include "job/RenderJob.hpp"
 #include "util/LazyVector.hpp"
+#include "util/RebaseMatrix.hpp"
 
 namespace engine {
 
@@ -30,32 +26,29 @@ using ComplexDouble = core::ComplexDouble;
  */
 class PerturbationEngine {
     static constexpr unsigned int TILE_SIZE = core::CHUNK_BLOCK;
-    static constexpr size_t PROBE_MROW = 128;
-    static constexpr size_t PROBE_MCOL = 128;
-    static constexpr size_t PROBE_CELL_CHUNK = 128;
-    // Number of *chunks* the probe grid is diced into (each covers PROBE_CELL_CHUNK
-    // cells). Claiming this many — not the cell count — avoids ~16k no-op claims/frame.
-    static constexpr size_t PROBE_CHUNKS = (PROBE_MROW * PROBE_MCOL + PROBE_CELL_CHUNK - 1) / PROBE_CELL_CHUNK;
-    static constexpr size_t MAX_WORKERS = 128;
+    //initialize matrix dimensions
+    using RebaseMatrix = RebaseMatrix__<9>;
+    static constexpr unsigned int MAX_WORKERS = 128;
+    static constexpr double REBASE_SHRINK_FACTOR = 0.25;
+    static constexpr unsigned int REBASE_ITERATION = 100;
     core::Pixel*& back_buf_ref;
+    std::array<RebaseMatrix*,MAX_WORKERS> workerLocalPtr;
+    std::atomic<uint32_t> nextWorkerLocal{0};
 
-    /**
-     * configuration struct for the matrix processing
-     * * computed once per job only if the deltaProbing is enabled
-     */
-    struct ProbeGridConfig {
-        double start_dx;
-        double start_dy;
-        double grid_step_x;
-        double grid_step_y;
+    RebaseMatrix* getLocalMatrix() {
+        static thread_local RebaseMatrix* ptr = [this]() {
+            const size_t my_idx = nextWorkerLocal.fetch_add(1ul, std::memory_order_relaxed);
+            assert(my_idx < MAX_WORKERS && "Exceeded MAX_WORKERS allocation limits!");
+            RebaseMatrix* allocated = new RebaseMatrix();
+            //register for deallocation
+            workerLocalPtr[my_idx] = allocated;
+            return allocated;
+        }();
+        return ptr;
+    }
 
-        ProbeGridConfig(job::RenderJob::JobSpecs specs) {
-            grid_step_x = (specs.width * specs.pixelStep.real()) / static_cast<double>(PROBE_MCOL);
-            grid_step_y = (specs.height * specs.pixelStep.imag()) / static_cast<double>(PROBE_MROW);
-            start_dx = -(specs.width / 2.0) * specs.pixelStep.real();
-            start_dy = -(specs.height / 2.0) * specs.pixelStep.imag();
-        }
-    };
+    
+    
 
     /**
      * @brief: record struct that is used to store the final orbit
@@ -67,317 +60,164 @@ class PerturbationEngine {
         ComplexDouble center;
         ComplexDouble A;    //first  order derivative
         ComplexDouble B;    //second order derivative
-        ComplexDouble C;    //third  order derivative (ErrorCheck)
+        ComplexDouble C;    //third  order derivative
     };
 
     /**
-     * @brief: struct which stores the orbit cache of the initial computed
-     * reference and the probe matrix (maybe unused but accounts for only
-     * 36 kbytes)
+     * @brief Engine-owned persistent reference cache.
+     * @details Survives across frames so panning within a reference's validity skips
+     * the whole probe + reference-orbit rebuild. Double-buffered (two slots + an
+     * atomic active pointer): a rebuild always writes the NON-active slot and then
+     * publishes it, so a straggler from a previous frame still reading the old slot
+     * is never corrupted (the previous slot's readers are gone by the time it is
+     * rebuilt into again — same ping-pong argument as DoubleCanvas).
      */
-    struct InitialOrbit {
-        util::LazyVector<ComplexDouble> orbitCache;
-        std::array<unsigned int, PROBE_MROW * PROBE_MCOL> probeMatrix;
-    };
+    struct ReferenceCache {
+        util::LazyVector<OrbitRecord> orbit;   // Z_i + A,B,C at the reference point
+        std::vector<double> thresholdEnvelope;
+        std::complex<core::BigFloat> reference;     // absolute reference (center + probe delta)
+        unsigned int iterations{0};            // orbit depth this cache was built to
+        bool valid{false};
 
-    /**
-     * @brief: struct which stores the per-worker local data to allow
-     * for atomic pointer setting
-     * * @note: the flags are needed since in between 2 jobs any thread
-     * which successfuly published any part of its local structure and
-     * made it public has to wait that all threads have stopped looking
-     * at it (or a thread could get stucked behind and if LazyVector
-     * reallocates it will be looking at garbage memory)
-     */
-    struct WorkerLocal {
-        bool wonFirstOrbitSet{false};
-        bool wonLastOrbitSet{false};
-        InitialOrbit initOrbit;
-        util::LazyVector<OrbitRecord> finalOrbitCache;
-
-        /**
-         * @brief: init the workerLocal fields given an amount of iterations
-         */
-        void init(unsigned int iter) {
-            //we account for one more iteration to also store the points
-            initOrbit.orbitCache.init(iter + 1);
-            finalOrbitCache.init(iter + 1);
-            wonFirstOrbitSet = false;
-            wonLastOrbitSet  = false;
-        }
-
-        /**
-         * @brief: attempt publishing the initialOrbit, setting a flag if successful
-         * @returns: the oldest published orbit, ours if successful, another thread
-         * if not
-         */
-        InitialOrbit* publishInitialOrbit(job::RenderJob::PTBJob& job_state) {
-            void* init_orbit = nullptr;
-            if(job_state.initialOrbitData.compare_exchange_strong(
-                init_orbit,
-                static_cast<void*>(&initOrbit),
-                std::memory_order_acq_rel,
-                std::memory_order_acquire
-            )) {
-                wonFirstOrbitSet = true;
-                return &initOrbit;
-            }
-            return static_cast<InitialOrbit*>(init_orbit);
-        }
-
-        /**
-         * @brief: attempts publishing the finalOrbit, setting a flag if successful
-         * @returns: the oldest published orbit, ours if successful, another thread
-         * if not
-         */
-        util::LazyVector<OrbitRecord>* publishFinalOrbit(job::RenderJob::PTBJob& job_state) {
-            void* final_orbit = nullptr;
-            if(job_state.finalOrbitData.compare_exchange_strong(
-                final_orbit,
-                static_cast<void*>(&finalOrbitCache),
-                std::memory_order_acq_rel,
-                std::memory_order_acquire
-            )) {
-                wonLastOrbitSet = true;
-                return &finalOrbitCache;
-            }
-            return static_cast<util::LazyVector<OrbitRecord>*>(final_orbit);
-        }
-
-        /**
-         * @brief attempts to compute the initial orbit and publish it
-         * @returns: the pointer to the published initial orbit, nullptr
-         * if the job was aborted
-         */
-        InitialOrbit* computeInitialOrbit(
-            job::RenderJob& job,
-            BigFloat x0, BigFloat y0, unsigned int iterations
-        ) {
-            InitialOrbit* retval = nullptr;
-            //get the jobState in order to check the publication
-            auto& state    = job.getState<job::PerturbationJob>();
-            auto& orbitVec = initOrbit.orbitCache;
-
-            //push the point as 0-th iteration of the set
-            orbitVec.emplace_back(0.0, 0.0);
-            BigFloat z_real = 0, z_imag = 0, z_real_sq = 0, z_imag_sq = 0;
-
-            //For each iteration we check
-            // 1.iteration count
-            // 2.escape condition
-            // 3.nobody else setted retval
-            for(
-                unsigned int i = 0;
-                i < iterations && static_cast<double>(z_real_sq) + static_cast<double>(z_imag_sq) <= 4.0 && retval == nullptr;
-                i++
-            ) {
-                if((i & 63) == 0) {
-                    retval = static_cast<InitialOrbit*>(state.initialOrbitData.load(std::memory_order_acquire));
-                    if(job.aborted()) return nullptr;
+        void build(std::complex<core::BigFloat> ref, size_t max_iterations) {
+            this->iterations = max_iterations;
+            reference = ref;
+            
+            // orbit: reset size to 0 (keeps capacity); records are appended with
+            // push_back below so orbit.size() reflects the true orbit length.
+            orbit.init(max_iterations);
+            // thresholdEnvelope: size it up front (resize, not reserve) so the
+            // per-iteration writes below are in-bounds and the prefix-min scan sees
+            // a real size().
+            thresholdEnvelope.assign(max_iterations, 0.0);
+    
+            // Standard BigFloat Z tracking for the absolute reference orbit
+            core::BigFloat z_r = 0.0;
+            core::BigFloat z_i = 0.0;
+    
+            // BLA Coefficients (starting at 0)
+            ComplexDouble A{0.0, 0.0};
+            ComplexDouble B{0.0, 0.0};
+            ComplexDouble C{0.0, 0.0};
+            ComplexDouble D{0.0, 0.0}; // The 4th derivative used for the threshold
+    
+            size_t actual_length = 0;
+    
+            for (size_t i = 0; i < max_iterations; i++) {
+                // 1. Store current state (cast center to double for the fast per-pixel loop)
+                double current_z_r = static_cast<double>(z_r);
+                double current_z_i = static_cast<double>(z_i);
+                
+                // Append the record (advances orbit.size()); reusing capacity from
+                // the init() above keeps this allocation-free across rebuilds.
+                orbit.push_back(OrbitRecord{
+                    ComplexDouble{current_z_r, current_z_i}, A, B, C});
+    
+                // 2. Threshold from the 4th derivative (D). Stored SQUARED (the squared
+                // valid-skip radius) so the render binary search compares squared
+                // magnitudes and avoids a per-pixel sqrt: |delta|_valid is proportional
+                // to |D|^(-1/4), so its square is |D|^(-1/2) = 1/sqrt(|D|).
+                double abs_D = std::sqrt(D.real() * D.real() + D.imag() * D.imag());
+                if (abs_D > 0.0) {
+                    thresholdEnvelope[i] = 1.0 / std::sqrt(abs_D);
+                } else {
+                    // At iteration 0, error is 0, so valid radius is theoretically infinite
+                    thresholdEnvelope[i] = std::numeric_limits<double>::max(); 
                 }
-
-                z_imag = 2.0 * z_real * z_imag + y0;
-                z_real = z_real_sq - z_imag_sq + x0;
-                z_real_sq = z_real * z_real;
-                z_imag_sq = z_imag * z_imag;
-
-                orbitVec.emplace_back(static_cast<double>(z_real), static_cast<double>(z_imag));
-            }
-
-            //we publish only if we're done
-            return retval == nullptr ? publishInitialOrbit(state) : retval;
-        }
-
-
-        /**
-         * @brief: computes the final orbit and publishes it using high-precision math
-         * @param: reference to the job to check for abortion and set the orbit data
-         * @param: x0,y0: the coordinates of the reference orbit
-         * @returns: the pointer to the published final orbit, nullptr if the job was aborted
-         * @note: Aligned to reference math. finalOrbitCache[0] holds baseline ground state.
-         */
-        util::LazyVector<OrbitRecord>* computeFinalOrbit(
-            const job::RenderJob& job,
-            job::RenderJob::PTBJob& jobState,
-            BigFloat x0,
-            BigFloat y0,
-            unsigned int iterations
-        ) {
-            using FinalOrbitCache = util::LazyVector<OrbitRecord>;
-            FinalOrbitCache* retval = nullptr;
-
-            // Local track variables starting at the true mathematical 0-th baseline
-            ComplexDouble Z{0.0}, A{0.0}, B{0.0}, C{0.0};
-            finalOrbitCache.emplace_back(Z, A, B, C);
-
-            BigFloat z_real = 0, z_imag = 0, z_real_sq = 0, z_imag_sq = 0;
-
-            for (unsigned int i = 0;
-                i < iterations && (Z.real() * Z.real() + Z.imag() * Z.imag()) <= 4.0 && retval == nullptr;
-                i++
-            ) {
-                if ((i & 63) == 0) {
-                    retval = static_cast<FinalOrbitCache*>(jobState.finalOrbitData.load(std::memory_order_acquire));
-                    if (job.aborted() || retval != nullptr) break;
-                }
-                //compute the derivative with Z_i-1
-                ComplexDouble next_A = (Z * A) * 2.0 + ComplexDouble{1.0, 0.0};
-                ComplexDouble next_B = (Z * B) * 2.0 + (A * A);
-                ComplexDouble next_C = (Z * C) * 2.0 + (A * B) * 2.0;
-
-                //advance Z
-                z_imag = 2.0 * z_real * z_imag + y0;
-                z_real = z_real_sq - z_imag_sq + x0;
-                z_real_sq = z_real * z_real;
-                z_imag_sq = z_imag * z_imag;
-
-                //commit the new Z
-                Z = ComplexDouble(static_cast<double>(z_real), static_cast<double>(z_imag));
+    
+                // 3. Calculate next BLA coefficients using double precision
+                ComplexDouble Z_n{current_z_r, current_z_i};
+                ComplexDouble two_Z_n = Z_n * 2.0;
+    
+                ComplexDouble next_D = (two_Z_n * D) + (A * C * 2.0) + (B * B);
+                ComplexDouble next_C = (two_Z_n * C) + (A * B * 2.0);
+                ComplexDouble next_B = (two_Z_n * B) + (A * A);
+                ComplexDouble next_A = (two_Z_n * A) + ComplexDouble{1.0, 0.0};
+    
                 A = next_A;
                 B = next_B;
                 C = next_C;
-                finalOrbitCache.emplace_back(Z, A, B, C);
-            }
-            //we publish only if we're done
-            return retval == nullptr ? publishFinalOrbit(jobState) : retval;
-        }
-
-
-        /**
-         * @brief: evaluates the delta probing of a complex point dc using the cache
-         * array of the provided job
-         * @prarm: const reference to the job (only checked for abortion)
-         * @param: const reference to the orbit cache
-         * @param: unsigned int iterations
-         * @returns: the escape time of the point in reference to the center or nullopt if
-         * job aborted
-         */
-        static std::optional<unsigned int> evalDeltaProbe(
-            ComplexDouble dc,
-            const job::RenderJob& job,
-            const util::LazyVector<ComplexDouble>& refCache,
-            unsigned int iterations
-        ) {
-            double dx = 0.0, dy = 0.0, dx2 = 0.0, dy2 = 0.0;
-            unsigned int size = refCache.size();
-
-            // Safety bounds tracking actual computed limits
-            for (unsigned int i = 0; i < size && i < iterations; ++i) {
-                if (job.aborted()) {
-                    return std::nullopt;
+                D = next_D;
+    
+                // 4. Step the actual reference orbit forward using BigFloat
+                core::BigFloat next_z_r = z_r * z_r - z_i * z_i + reference.real();
+                core::BigFloat next_z_i = core::BigFloat(2.0) * z_r * z_i + reference.imag();
+                
+                z_r = next_z_r;
+                z_i = next_z_i;
+                actual_length++;
+    
+                // If the reference orbit escapes, we stop building early
+                if (static_cast<double>(z_r * z_r + z_i * z_i) > 4.0) {
+                    break;
                 }
-                double zr = refCache[i].real();
-                double zi = refCache[i].imag();
-
-                // Check boundary conditions matching reference math exactly
-                if ((zr + dx) * (zr + dx) + (zi + dy) * (zi + dy) > 4.0) return i;
-
-                double next_dx = 2.0 * (zr * dx - zi * dy) + dx2 - dy2 + dc.real();
-                double next_dy = 2.0 * (zr * dy + zi * dx) + 2.0 * dx * dy + dc.imag();
-
-                dx = next_dx;
-                dy = next_dy;
-                dx2 = dx * dx;
-                dy2 = dy * dy;
             }
-
-            return size;
-        }
-
-
-        /**
-         * @brief: compute a chunk of the shared delta probe matrix
-         */
-        static bool computeProbeChunk(
-            const job::RenderJob& job, //only to pass to the eval function for job abortion
-            const ProbeGridConfig& config,
-            InitialOrbit& refOrbit,
-            unsigned int iterations,
-            size_t chunk_idx
-        ) {
-            // Calculate the linear bounds for this specific chunk
-            size_t start_cell = chunk_idx * PROBE_CELL_CHUNK;
-            size_t total_cells = PROBE_MROW * PROBE_MCOL;
-            size_t end_cell = std::min(start_cell + PROBE_CELL_CHUNK, total_cells);
-
-            // Process the contiguous slice of cells allocated to this chunk
-            for (size_t cell_idx = start_cell; cell_idx < end_cell; ++cell_idx) {
-                // Deconstruct the 1D index into true 2D matrix coordinates
-                int row = static_cast<int>(cell_idx / PROBE_MCOL);
-                int col = static_cast<int>(cell_idx % PROBE_MCOL);
-
-                // Compute delta offsets relative to the reference coordinate center
-                double test_dx = config.start_dx + (col * config.grid_step_x);
-                double test_dy = config.start_dy + (row * config.grid_step_y);
-
-                // Run the adjusted orbit evaluation
-                auto iter = evalDeltaProbe(ComplexDouble{test_dx, test_dy}, job, refOrbit.orbitCache, iterations);
-                if(!iter.has_value()) return false;
-
-                // commit to the matrix
-                refOrbit.probeMatrix[cell_idx] = *iter;
+    
+            // orbit already holds exactly `actual_length` records (via push_back);
+            // trim the threshold envelope to match if the reference orbit escaped
+            // before max_iterations.
+            if (actual_length < max_iterations) {
+                thresholdEnvelope.resize(actual_length);
             }
-
-            return true;
-        }
-
+    
+            // 5. Scan the threshold envelope to record the prefix minimum.
+            // This ensures the skip radius is monotonically non-increasing, which is 
+            // strictly required for the binary search in your rendering loop to work.
+            if (!thresholdEnvelope.empty()) {
+                double current_min = thresholdEnvelope[0];
+                for (size_t i = 1; i < thresholdEnvelope.size(); i++) {
+                    if (thresholdEnvelope[i] < current_min) {
+                        current_min = thresholdEnvelope[i];
+                    } else {
+                        thresholdEnvelope[i] = current_min;
+                    }
+                }
+            }
+    
+            this->valid = true;
+        }  
     };
+    ReferenceCache cacheSlots_[2];
+    std::atomic<ReferenceCache*> activeCache_{nullptr};   // nullptr => must rebuild
+    std::atomic<uint64_t> rebuilds_{0};                   // reference rebuilds (telemetry)
+    
+    /**
+     * @brief Validate one render tile against a cached reference (Phase 1).
+     * @details Samples 1 pixel in 16 and runs the perturbation loop; returns true if
+     * any sample glitches — the Pauldelbrot criterion |Z_ref+δ|² < |δ|²·ε (the full
+     * point collapses relative to the perturbation => catastrophic cancellation =>
+     * the reference is inadequate here) or a NaN. A glitch forces a rebuild.
+     */
+    bool validateTile(const job::RenderJob& job, const job::RenderJob::JobSpecs& specs, size_t chunkId);
+
+    bool rebaseChunk(const job::RenderJob& job, size_t chunk_idx);
 
     const util::Gradient& gradient;
-    //index for next slot in workerDataForDealloc
-    std::atomic<size_t> dealloc_idx__{0};
-    //contious storage for workerData for deallocation
-    std::array<WorkerLocal*,MAX_WORKERS> dealloc__;
-
-    // --- Large driver methods (defined in PerturbationEngine.cpp) ---
-    WorkerLocal& getWorkerData();
 
     void processChunkScalar(
         const job::RenderJob& job_ref,
         const job::RenderJob::JobSpecs& specs,
-        const util::LazyVector<OrbitRecord>& finalOrbitCacheRef,
-        const size_t chunk_idx,
-        double best_dx,
-        double best_dy);
-
-    /**
-     * @brief: returns the distance from the center of the winner point
-     * from the delta probing (biggest converging escape time).
-     */
-    static ComplexDouble getProbeWinnerDelta(
-        const std::array<unsigned int, PROBE_MROW * PROBE_MCOL> probeMatrix,
-        ProbeGridConfig cfg,
-        unsigned int max_iterations);
+        const size_t chunk_idx);
 
 public:
-
-    /**
-     * @brief: waiting function for the caller
-     * @note: for each perturbationJob a thread gets elected as the host of the
-     * reference orbits to compute the rendering. This means that other threads
-     * reference and access local data structures. Since in rare cases (though may
-     * happen) LazyVectors inside the local structs could reallocate, if a thread
-     * won any race, it has to wait that the other threads stop referencing its
-     * data before getting another job.
-     * * @note: at the worst case, deltaProbing enabled and distinct threads which
-     * won the initialOrbit set and finalOrbit set, at most 2 threads have to wait
-     * that all the other threads are done
-     */
-    bool hasToWait() {
-        const WorkerLocal& local = getWorkerData();
-        return local.wonFirstOrbitSet || local.wonLastOrbitSet;
-    }
-
-
     explicit PerturbationEngine(const util::Gradient& gradient, core::Pixel*& back_buf_ref):
         gradient(gradient),back_buf_ref(back_buf_ref) {}
 
-    /// Wait-free per-job driver (7-phase pipeline). Defined in the .cpp.
+    /// Three-phase per-job driver (validate → rebuild → render). Defined in the .cpp.
     void processPerturbationJob(job::RenderJob& job);
+
+    /// Number of reference-orbit rebuilds so far (0 while the cache is being reused).
+    uint64_t rebuildCount() const noexcept { return rebuilds_.load(std::memory_order_relaxed); }
 
     static inline size_t getChunks(unsigned int width, unsigned int height) noexcept {
         return core::ComputeTotalChunks(width, height);
     }
+
+    unsigned int evaluateBigFloatDepth(
+        const job::RenderJob& job_ref,
+        const std::complex<core::BigFloat>& c, 
+        unsigned int max_iter);
+    
 };
 
 } // namespace engine

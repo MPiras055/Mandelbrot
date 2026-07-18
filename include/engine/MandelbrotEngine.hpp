@@ -55,6 +55,10 @@ public:
     static constexpr double getPerturbationThreshold()     { return ZOOM_PTB_THRESH; }
     static constexpr double getEscapeTimeDoubleThreshold() { return ZOOM_ETA_DOUBLE_THRESH; }
 
+    /// Perturbation reference rebuilds so far (telemetry; stays flat while panning
+    /// reuses the cached reference).
+    uint64_t ptbRebuildCount() const { return ptbEngine.rebuildCount(); }
+
 private:
     enum class JobStrategy { ETA, PERTURBATION };
 

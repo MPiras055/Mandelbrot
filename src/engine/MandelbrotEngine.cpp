@@ -83,10 +83,9 @@ void MandelbrotEngine::workerRoutine(size_t /*thread_id*/) {
                     etaEngine.processEscapeTimeJob<double>(job);
             } else if (job.holds<job::RenderJob::PTBJob>()) {
                 ptbEngine.processPerturbationJob(job);
-                wait = ptbEngine.hasToWait();
             }
 
-            wait? job.release() : job.releaseWait();
+            job.release();
 
         } else {
             jobStack.wait_for_job(last_version);

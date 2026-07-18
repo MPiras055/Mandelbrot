@@ -54,27 +54,19 @@ struct PerturbationJob {
     PerturbationJob(const PerturbationJob&) = delete;
     PerturbationJob& operator=(const PerturbationJob&) = delete;
 
-    /// Reference cache published for this frame (engine-owned; set by the rebase leader).
-    void* rebaseCache = nullptr;
-
-    // Transitional: per-worker orbit publication slots used by the *current* engine's
-    // reference election. The 3-phase engine replaces these with the engine-owned
-    // persistent cache; remove them then.
-    CACHE_ALIGN std::atomic<void*> initialOrbitData{nullptr};
-    std::atomic<void*> finalOrbitData{nullptr};
-    CACHE_PAD(std::atomic<void*>)
-
     // ---- claim counters (one cache line) ----
     CACHE_ALIGN std::atomic<uint64_t> valIdx{0};
     std::atomic<uint64_t> rebaseIdx{0};
     std::atomic<uint64_t> renderIdx{0};
-    CACHE_PAD(std::atomic<uint64_t>)
+    char pad__[CACHE_LINE_SIZE - sizeof(std::atomic<uint64_t>) * 3];
     // ---- completion counters (next cache line) ----
     CACHE_ALIGN std::atomic<uint64_t> valDone{0};
     std::atomic<uint64_t> rebaseDone{0};
     std::atomic<uint64_t> renderDone{0};
-    CACHE_PAD(std::atomic<uint64_t>)
-
+    char pad1__[CACHE_LINE_SIZE - sizeof(std::atomic<uint64_t>) * 3];
+    std::atomic<void*> rebaseMatrix{nullptr}; //no need for padding only setted one time
+    
+    
     // =========================================================================
     // LIFECYCLE (called by RenderJob via std::visit; the render pair is the gate)
     // =========================================================================
@@ -126,7 +118,7 @@ struct PerturbationJob {
     /// @return true iff this call pushed the validation phase to completion (leader).
     bool reportValidation(size_t total, bool glitch) noexcept {
         uint64_t commit = 1;
-        if (glitch) {
+        if (glitch) {   //this thread found a glitch
             const uint64_t prev = valDone.fetch_or(GLITCH_FOUND, std::memory_order_acq_rel);
             if ((prev & GLITCH_FOUND) == 0) {                       // first to glitch
                 const uint64_t claimed = valIdx.exchange(total, std::memory_order_acq_rel);
@@ -139,20 +131,20 @@ struct PerturbationJob {
         return last;
     }
 
-    enum class ValResult { PROCEED, REBASE, ABORTED };
+    enum class Validation { PROCEED, REBASE, ABORTED };
 
     /// Barrier: park until validation finishes (or the job aborts). Routes the caller
     /// to render (PROCEED), rebase (REBASE), or exit (ABORTED).
-    ValResult waitValidation(size_t total) noexcept {
+    Validation waitValidation(size_t total) noexcept {
         uint64_t s = valDone.load(std::memory_order_acquire);
         while ((s & VAL_MASK) < total) {
-            if (s & ABORT_FLAG) return ValResult::ABORTED;
+            if (s & ABORT_FLAG) return Validation::ABORTED;
             valDone.wait(s, std::memory_order_acquire);
             s = valDone.load(std::memory_order_acquire);
         }
-        if (s & ABORT_FLAG)   return ValResult::ABORTED;
-        if (s & GLITCH_FOUND) return ValResult::REBASE;
-        return ValResult::PROCEED;
+        if (s & ABORT_FLAG)   return Validation::ABORTED;
+        if (s & GLITCH_FOUND) return Validation::REBASE;
+        return Validation::PROCEED;
     }
 
     // =========================================================================
@@ -180,21 +172,28 @@ struct PerturbationJob {
 
     /// Aggregator: publish the next search iteration — reset the cell index to
     /// [next_iter : 0] and wake the followers parked on the iteration barrier.
+    /// @note This store is the ONLY signal that the current iteration's aggregation
+    /// (shrinkAndCenter / cache publish) is complete: it happens-after all of that on
+    /// the aggregator, and its release pairs with the acquire in waitRebaseIteration.
     void advanceRebase(uint32_t next_iter) noexcept {
         rebaseIdx.store(static_cast<uint64_t>(next_iter) << REBASE_ITER_SHIFT, std::memory_order_release);
-        rebaseDone.notify_all();
+        rebaseIdx.notify_all();
     }
 
-    /// Follower barrier: wait until iteration `iteration`'s matrix has been fully
-    /// aggregated (rebaseDone reached `iteration * matrix_total`). @return false on abort.
-    bool waitRebaseIteration(uint32_t iteration, size_t matrix_total) noexcept {
-        if (iteration == 0) return !aborted();
-        const uint64_t target = static_cast<uint64_t>(iteration) * matrix_total;
-        uint64_t s = rebaseDone.load(std::memory_order_acquire);
-        while ((s & STD_MASK) < target) {
+    /// Follower barrier: block until the aggregator has published a search iteration
+    /// strictly newer than `iteration` (i.e. advanceRebase stored `iteration+1` into
+    /// the high bits of rebaseIdx). Waiting on rebaseIdx — not rebaseDone — is what
+    /// makes this a real barrier: rebaseDone reaches its per-iteration total *before*
+    /// the aggregator runs shrinkAndCenter/publish, so only the advanceRebase store
+    /// safely gates followers against that work. @return false on abort.
+    /// @note the acquire below synchronises-with advanceRebase's release, so on return
+    /// the caller sees the aggregator's matrix writes and any cache it published.
+    bool waitRebaseIteration(uint32_t iteration, size_t /*matrix_total*/) noexcept {
+        uint64_t s = rebaseIdx.load(std::memory_order_acquire);
+        while (((s & STD_MASK) >> REBASE_ITER_SHIFT) <= iteration) {
             if (s & ABORT_FLAG) return false;
-            rebaseDone.wait(s, std::memory_order_acquire);
-            s = rebaseDone.load(std::memory_order_acquire);
+            rebaseIdx.wait(s, std::memory_order_acquire);   // spurious wakeups from claimRebase are re-checked
+            s = rebaseIdx.load(std::memory_order_acquire);
         }
         return (s & ABORT_FLAG) == 0;
     }
@@ -204,38 +203,25 @@ struct PerturbationJob {
     //   probe  -> validation pair   |   chunk -> render pair
     // =========================================================================
 
-    [[nodiscard]] bool getProbeChunk(size_t total_probes, size_t& chunk_i) noexcept {
-        return claimValidation(total_probes, chunk_i);
-    }
-    void markCompletedProbe() noexcept {
-        valDone.fetch_add(1, std::memory_order_release);
-    }
-    /// @note now also returns true if the job aborted — fixes the old probe-spin hang.
-    bool probeCompleted(size_t total_probes) const noexcept {
-        const uint64_t s = valDone.load(std::memory_order_acquire);
-        return (s & VAL_MASK) >= total_probes || (renderDone.load(std::memory_order_acquire) & ABORT_FLAG);
-    }
-    [[nodiscard]] bool getChunk(size_t total_chunks, size_t& chunk_i) noexcept {
-        return claimRender(total_chunks, chunk_i);
-    }
-    void markCompletedChunk([[maybe_unused]] size_t chunk_i) noexcept {
-        reportRender();
-    }
+    
 
     protected:
     friend RenderJob;
 
+    /**
+     * @brief: the rebaseMatrix has to be handled by the leader for now either with hazard pointers or Idx
+     */
     void reset(size_t render_total) noexcept {
         assert((render_total & ABORT_FLAG) == 0 && "render_total too high");
-        rebaseCache = nullptr;
-        initialOrbitData.store(nullptr, std::memory_order_relaxed);
-        finalOrbitData.store(nullptr, std::memory_order_relaxed);
-        valIdx.store(0, std::memory_order_relaxed);
-        rebaseIdx.store(0, std::memory_order_relaxed);
-        renderIdx.store(0, std::memory_order_relaxed);
-        valDone.store(0, std::memory_order_relaxed);
-        rebaseDone.store(0, std::memory_order_relaxed);
-        renderDone.store(0, std::memory_order_relaxed);
+        //reset the rebaseMatrix
+        rebaseMatrix.store(nullptr,std::memory_order_relaxed);
+        //reset all the counters
+        valIdx.store(       0, std::memory_order_relaxed);
+        rebaseIdx.store(    0, std::memory_order_relaxed);
+        renderIdx.store(    0, std::memory_order_relaxed);
+        valDone.store(      0, std::memory_order_relaxed);
+        rebaseDone.store(   0, std::memory_order_relaxed);
+        renderDone.store(   0, std::memory_order_relaxed);
     }
 
     /**
@@ -252,6 +238,7 @@ struct PerturbationJob {
         valDone.fetch_or(ABORT_FLAG, std::memory_order_acq_rel);
         valDone.notify_all();
         rebaseIdx.fetch_or(ABORT_FLAG, std::memory_order_acq_rel);
+        rebaseIdx.notify_all();   // followers now park on rebaseIdx, not rebaseDone
         rebaseDone.fetch_or(ABORT_FLAG, std::memory_order_acq_rel);
         rebaseDone.notify_all();
 
