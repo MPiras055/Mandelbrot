@@ -54,67 +54,43 @@ struct RebaseMatrix__ {
         rebaseMatrix[idx] = value;
     }
 
-    // Evaluates 3x3 subchunks and shrinks the matrix toward the most stable deep region
-    void shrinkAndCenter(double shrink_factor = 0.25) {
-        unsigned int max_subchunk_min = 0;
-        
-        // Default to the center subchunk (index 1, 1 in a 3x3 grid of subchunks)
-        int best_SC_r = 1; 
-        int best_SC_c = 1;
+    // Recenters on the DEEPEST cell (longest orbit = best perturbation reference) and
+    // shrinks the step. Max-depth beats the old highest-3x3-minimum heuristic, which
+    // avoided isolated deep points (minibrot centers / filaments) — exactly the points
+    // that make the best reference.
+    // @return the depth of the winning cell (so the caller can early-out when a cell
+    //         reaches the iteration budget).
+    unsigned int shrinkAndCenter(double shrink_factor = 0.25) {
+        // Default to the center cell so a fully-shallow grid stays put.
+        unsigned int best_depth = 0;
+        int best_idx = CENTER_OFFSET * SQUARE + CENTER_OFFSET;
 
-        // 1. Evaluate all 9 subchunks (each is 3x3)
-        for (int SC_r = 0; SC_r < 3; ++SC_r) {
-            for (int SC_c = 0; SC_c < 3; ++SC_c) {
-                
-                unsigned int current_subchunk_min = std::numeric_limits<unsigned int>::max();
-                
-                // Find the LOWEST iteration count within this specific 3x3 subchunk
-                for (int i = 0; i < 3; ++i) {
-                    for (int j = 0; j < 3; ++j) {
-                        int r = SC_r * 3 + i;
-                        int c = SC_c * 3 + j;
-                        int idx = r * SQUARE + c;
-                        
-                        if (rebaseMatrix[idx] < current_subchunk_min) {
-                            current_subchunk_min = rebaseMatrix[idx];
-                        }
-                    }
-                }
-
-                // 2. Select the subchunk with the HIGHEST minimum iteration count
-                if (current_subchunk_min > max_subchunk_min) {
-                    max_subchunk_min = current_subchunk_min;
-                    best_SC_r = SC_r;
-                    best_SC_c = SC_c;
-                } 
-                // Tie-breaker: if subchunks tie, prefer the one closest to the center (1, 1)
-                else if (current_subchunk_min == max_subchunk_min && current_subchunk_min > 0) {
-                    int current_dist = (SC_r - 1)*(SC_r - 1) + (SC_c - 1)*(SC_c - 1);
-                    int best_dist = (best_SC_r - 1)*(best_SC_r - 1) + (best_SC_c - 1)*(best_SC_c - 1);
-                    
-                    if (current_dist < best_dist) {
-                        best_SC_r = SC_r;
-                        best_SC_c = SC_c;
-                    }
-                }
+        for (int idx = 0; idx < REBASE_MTX_CHUNKS; ++idx) {
+            const unsigned int d = rebaseMatrix[idx];
+            if (d > best_depth) {
+                best_depth = d;
+                best_idx = idx;
+            } else if (d == best_depth && d > 0) {
+                // Tie-break: prefer the cell closest to the current center.
+                const int r  = idx / SQUARE,      c  = idx % SQUARE;
+                const int br = best_idx / SQUARE,  bc = best_idx % SQUARE;
+                const int dist  = (r  - CENTER_OFFSET)*(r  - CENTER_OFFSET) + (c  - CENTER_OFFSET)*(c  - CENTER_OFFSET);
+                const int bdist = (br - CENTER_OFFSET)*(br - CENTER_OFFSET) + (bc - CENTER_OFFSET)*(bc - CENTER_OFFSET);
+                if (dist < bdist) best_idx = idx;
             }
         }
 
-        // 3. The new center is the physical center of the winning 3x3 subchunk.
-        // For subchunk (SC_r, SC_c), its center cell is at offset 1 within the subchunk.
-        int best_row = best_SC_r * 3 + 1;
-        int best_col = best_SC_c * 3 + 1;
+        const int best_row = best_idx / SQUARE;
+        const int best_col = best_idx % SQUARE;
 
-        double offset_x = (best_col - CENTER_OFFSET) * stepSize.real();
-        double offset_y = (best_row - CENTER_OFFSET) * stepSize.imag();
-        
+        const double offset_x = (best_col - CENTER_OFFSET) * stepSize.real();
+        const double offset_y = (best_row - CENTER_OFFSET) * stepSize.imag();
+
         center.real(center.real() + core::BigFloat(offset_x));
         center.imag(center.imag() + core::BigFloat(offset_y));
 
-        // 4. Shrink the step size for the next iteration
         stepSize = {stepSize.real() * shrink_factor, stepSize.imag() * shrink_factor};
-
-        // 5. Update reduction state
         reductionCounter++;
+        return best_depth;
     }
 };

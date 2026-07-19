@@ -18,7 +18,6 @@ struct FrameRequest {
     unsigned int renderWidth;
     unsigned int renderHeight;
     unsigned int iterations;
-    bool enableDeltaProbing{true};
 };
 
 } // namespace engine::dto

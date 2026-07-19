@@ -13,19 +13,30 @@ void PerturbationEngine::processChunkScalar(
     const job::RenderJob::JobSpecs& specs,
     const size_t chunk_idx
 ) {
+    // Tile bounds first — independent of the cache.
+    const int tiles_x = (specs.width + TILE_SIZE - 1) / TILE_SIZE;
+    const size_t tile_px = (chunk_idx % tiles_x) * TILE_SIZE;
+    const size_t tile_py = (chunk_idx / tiles_x) * TILE_SIZE;
+
+    const int end_px = std::min(tile_px + TILE_SIZE, static_cast<size_t>(specs.width));
+    const int end_py = std::min(tile_py + TILE_SIZE, static_cast<size_t>(specs.height));
+
+    core::Pixel* const __restrict__ raw_canvas = back_buf_ref;
+
     ReferenceCache* cache = activeCache_.load(std::memory_order_acquire);
-    if (!cache) return; 
+    if (!cache) {
+        // No reference yet (a probe-disabled preview before the first settle built the
+        // cache): paint the tile blank so the frame is clean rather than stale.
+        for (int py = tile_py; py < end_py; py++) {
+            core::Pixel* const row_ptr = raw_canvas + (py * specs.width);
+            for (int px = tile_px; px < end_px; px++) row_ptr[px] = core::PIXEL_BLACK;
+        }
+        return;
+    }
 
     const OrbitRecord* __restrict__ orbitCache = cache->orbit.data();
     const unsigned int max_iter = specs.iterations;
     const size_t valid_orbit_size = cache->orbit.size();
-
-    const int tiles_x = (specs.width + TILE_SIZE - 1) / TILE_SIZE;
-    const size_t tile_px = (chunk_idx % tiles_x) * TILE_SIZE;
-    const size_t tile_py = (chunk_idx / tiles_x) * TILE_SIZE;
-    
-    const int end_px = std::min(tile_px + TILE_SIZE, static_cast<size_t>(specs.width));
-    const int end_py = std::min(tile_py + TILE_SIZE, static_cast<size_t>(specs.height));
 
     const double cache_offset_x = static_cast<double>(specs.reference.real() - cache->reference.real());
     const double cache_offset_y = static_cast<double>(specs.reference.imag() - cache->reference.imag());
@@ -35,7 +46,10 @@ void PerturbationEngine::processChunkScalar(
 
     const double eps_scale2 = 1.0 / std::sqrt(specs.pixelStep.real() * 1e-6);
 
-    core::Pixel* const __restrict__ raw_canvas = back_buf_ref;
+    // Cap per-tile BigFloat fallbacks so a short/inadequate reference degrades to a
+    // fast, slightly-wrong tile instead of freezing this worker on one heavy tile.
+    constexpr unsigned int MAX_FALLBACK_PER_TILE = 128;
+    unsigned int fallback_budget = MAX_FALLBACK_PER_TILE;
 
     for (int py = tile_py; py < end_py; py++) {
         core::Pixel* const row_ptr = raw_canvas + (py * specs.width);
@@ -53,7 +67,9 @@ void PerturbationEngine::processChunkScalar(
             const double dc_mag2 = dc_real * dc_real + dc_imag * dc_imag;
             const double T2 = dc_mag2 * eps_scale2;
 
-            unsigned int lo = 0, hi = static_cast<unsigned int>(valid_orbit_size);
+            // Cap the skip at the iteration budget: a cache deeper than max_iter
+            // (a 2048 settle cache serving a 1024 preview) must not skip past it.
+            unsigned int lo = 0, hi = static_cast<unsigned int>(std::min(valid_orbit_size, static_cast<size_t>(max_iter)));
             while (lo < hi) {
                 const unsigned int mid = (lo + hi) >> 1;
                 if (cache->thresholdEnvelope[mid] >= T2) lo = mid + 1; else hi = mid;
@@ -90,7 +106,10 @@ void PerturbationEngine::processChunkScalar(
             // PERTURBATION LOOP
             while (iter < valid_orbit_size && iter < max_iter) {
                 // Bitwise AND is slightly faster than modulo for abort polling
-                if ((iter & 255) == 0 && job_ref.aborted()) return;
+                if (job_ref.aborted()) {
+                    puts("JOB ABORTED");
+                    return;
+                }
 
                 double zr = orbitCache[iter].center.real();
                 double zi = orbitCache[iter].center.imag();
@@ -126,7 +145,12 @@ void PerturbationEngine::processChunkScalar(
             // ==============================================================================
             // BIGFLOAT FALLBACK HANDLING
             // ==============================================================================
-            if (!escaped && (glitched || iter == valid_orbit_size) && iter < max_iter) {
+            // Ran out of reference orbit before escaping: recompute this pixel in full
+            // BigFloat — but only within the per-tile budget. Glitched pixels are NOT
+            // routed here (they get the cheap indicator fill below).
+            if (!escaped && !glitched && iter == valid_orbit_size && iter < max_iter
+                && fallback_budget > 0) {
+                --fallback_budget;
                 BigFloat abs_c_r = specs.reference.real() + BigFloat(screen_dx);
                 BigFloat abs_c_i = specs.reference.imag() + BigFloat(screen_dy);
 
@@ -135,7 +159,10 @@ void PerturbationEngine::processChunkScalar(
                 unsigned int bf_iter = 0;
 
                 while (bf_iter < max_iter) {
-                    if ((bf_iter & 63) == 0 && job_ref.aborted()) return;
+                    if (job_ref.aborted()) {
+                        puts("JOB ABORTED");
+                        return;
+                    }
 
                     BigFloat bf_z_r_sq = bf_z_r * bf_z_r;
                     BigFloat bf_z_i_sq = bf_z_i * bf_z_i;
@@ -154,11 +181,15 @@ void PerturbationEngine::processChunkScalar(
                     bf_iter++;
                 }
                 
-                iter = bf_iter; 
+                iter = bf_iter;
                 if (!escaped) {
                     iter = max_iter;
                 }
-                glitched = false; 
+            }
+            // Ran out of orbit but the fallback budget was spent: approximate as
+            // interior so the tile can't stall on a wave of BigFloat recomputes.
+            else if (!escaped && !glitched && iter == valid_orbit_size && iter < max_iter) {
+                iter = max_iter;
             }
 
             // Final Color Write
@@ -297,143 +328,87 @@ unsigned int PerturbationEngine::evaluateBigFloatDepth(
 }
 
 /**
- * @brief Three-phase per-job driver: validate (reuse the persistent cache) →
- * rebuild (probe + reference orbit) on glitch/miss → render.
- */
-/**
- * @brief Three-phase per-job driver: validate (reuse the persistent cache) →
- * rebuild (probe + reference orbit) on glitch/miss → render.
+ * @brief Per-job driver: rebuild the reference UNCONDITIONALLY (cooperative
+ * neighbourhood search + orbit build), then render. Every frame computes its own
+ * reference — no cross-frame reuse, no validation, no center-first skip — so a frame
+ * never renders against a stale or off-center reference.
  */
 void PerturbationEngine::processPerturbationJob(job::RenderJob& job) {
-    auto& jobState     = job.getState<job::RenderJob::PTBJob>();
-    const auto specs   = job.getSpecs();
+    auto& jobState = job.getState<job::RenderJob::PTBJob>();
+    const auto specs = job.getSpecs();
 
+    // ---- Phase 1: REBUILD the reference (cooperative grid search + build) ----
+    {
+        // Inactive double-buffer slot to build into (ping-pong; never delete a live
+        // cache — a straggler from the previous frame may still be reading the active one).
+        auto inactiveSlot = [&]() -> ReferenceCache* {
+            ReferenceCache* active = activeCache_.load(std::memory_order_acquire);
+            return (active == &cacheSlots_[0]) ? &cacheSlots_[1] : &cacheSlots_[0];
+        };
 
-    
-    const util::LazyVector<OrbitRecord>* orbit = nullptr;
-
-    // ---- Phase 1: VALIDATE — try to reuse the persistent cache ----
-    ReferenceCache* cache = activeCache_.load(std::memory_order_acquire);
-    const bool candidate = cache && cache->valid && cache->iterations == specs.iterations;
-    
-    if (candidate) {
-        bool local_glitch = false;
-        size_t vc;
-        while (jobState.claimValidation(specs.chunks, vc)) {
-            // If we haven't found a glitch yet, do the heavy validation math.
-            // If we HAVE found one, skip the math to save time, but continue 
-            // claiming chunks to satisfy the jobState barrier.
-            if (!local_glitch) {
-                if (validateTile(job, specs, vc)) {
-                    local_glitch = true;
-                }
-            }
-            jobState.reportValidation(specs.chunks, local_glitch);
-        }
-        
-        switch (jobState.waitValidation(specs.chunks)) {
-            case job::PerturbationJob::Validation::ABORTED: return;
-            case job::PerturbationJob::Validation::PROCEED: orbit = &cache->orbit; break;
-            case job::PerturbationJob::Validation::REBASE:  break;   
-        }
-    }
-
-    puts("REBASE");
-
-    // ---- Phase 2: REBUILD (probe + reference orbit) if not reusing ----
-    if (orbit == nullptr) {
         RebaseMatrix* localMatrixPtr = getLocalMatrix();
-        
-        // FIX #2: Initialize our local matrix BEFORE the CAS lock.
-        // This guarantees that whoever wins publishes a fully valid matrix.
         std::complex<double> start_step{
             specs.pixelStep.real() * (specs.width / 4.0) / RebaseMatrix::DIMENSION,
             specs.pixelStep.imag() * (specs.height / 4.0) / RebaseMatrix::DIMENSION
         };
         localMatrixPtr->init(specs.reference, start_step);
 
+        // CAS elects the matrix owner; the losers share it and cooperate on the search.
         void* sharedPtr = nullptr;
-        if (!jobState.rebaseMatrix.compare_exchange_strong(sharedPtr, localMatrixPtr)) {
-            // We lost the CAS. Safely discard our local init and use the winner's pointer.
+        if (!jobState.rebaseMatrix.compare_exchange_strong(sharedPtr, localMatrixPtr))
             localMatrixPtr = static_cast<RebaseMatrix*>(sharedPtr);
-        }
-
         RebaseMatrix& sharedMatrix = *localMatrixPtr;
-        
+
         const double limit_x = specs.pixelStep.real() * 0.25;
         const double limit_y = specs.pixelStep.imag() * 0.25;
+        const unsigned int rebase_iter_cap = specs.iterations;   // probe to the real budget
 
-        // FIX #3: Cap the search iteration depth to prevent BigFloat freezes.
-        // 5000 is enough to resolve deep features without hanging the UI.
-        const unsigned int rebase_iter_cap = std::min(specs.iterations, 5000u);
-        
         size_t cell;
         uint32_t iteration;
         bool leader;
-        
-        while (true) {   
+
+        while (true) {
             leader = false;
             while (jobState.claimRebase(RebaseMatrix::REBASE_MTX_CHUNKS, iteration, cell)) {
                 auto test_point = sharedMatrix.getPointAt(cell);
-                
-                // Use the capped iteration limit here to prevent freezing
                 unsigned int depth = evaluateBigFloatDepth(job, test_point, rebase_iter_cap);
-                
                 sharedMatrix.setValueAt(cell, depth);
                 leader = jobState.reportRebase(RebaseMatrix::REBASE_MTX_CHUNKS);
             }
 
-            puts("CACHE_ITERATION");
-            
             if (job.aborted()) return;
-            
-            if (leader) {
-                sharedMatrix.shrinkAndCenter(0.15);
 
+            if (leader) {
+                sharedMatrix.shrinkAndCenter(0.15);   // recenter on the deepest cell
                 if (std::abs(sharedMatrix.stepSize.real()) <= limit_x ||
                     std::abs(sharedMatrix.stepSize.imag()) <= limit_y) {
-
-                    // Subpixel center found. Publish into the INACTIVE double-buffer
-                    // slot and flip the active pointer — never delete a live cache, a
-                    // straggler from a prior job may still be reading the active slot.
-                    // (Two slots + abort-driven drain: same ping-pong as DoubleCanvas.)
-                    ReferenceCache* active = activeCache_.load(std::memory_order_acquire);
-                    ReferenceCache* target = (active == &cacheSlots_[0]) ? &cacheSlots_[1]
-                                                                         : &cacheSlots_[0];
-                    puts("BUILDING CACHE");
-                    target->build(sharedMatrix.center, specs.iterations);
-                    puts("CACHE BUILT");
+                    ReferenceCache* target = inactiveSlot();
+                    target->build(job, sharedMatrix.center, specs.iterations);
+                    if (job.aborted()) return;   // build bailed early — don't publish a partial orbit
                     rebuilds_.fetch_add(1, std::memory_order_relaxed);
                     activeCache_.store(target, std::memory_order_release);
                 }
-                // Release followers ONLY after the cache is published: advanceRebase's
-                // release pairs with the acquire in waitRebaseIteration.
+                // Release followers ONLY after the cache is published (advanceRebase's
+                // release pairs with the acquire in waitRebaseIteration).
                 jobState.advanceRebase(iteration + 1);
             } else {
-                // Block until the aggregator advances this pass; bail on abort.
                 if (!jobState.waitRebaseIteration(iteration, RebaseMatrix::REBASE_MTX_CHUNKS))
                     return;
             }
-            
-            // Exit condition evaluated safely by all threads AFTER the barrier
-            if (std::abs(sharedMatrix.stepSize.real()) <= limit_x || 
+
+            if (std::abs(sharedMatrix.stepSize.real()) <= limit_x ||
                 std::abs(sharedMatrix.stepSize.imag()) <= limit_y) {
                 break;
             }
         }
     }
 
-    puts("OUTTA CACHE");
-
-    // ---- Phase 3: RENDER ----
+    // ---- Phase 2: RENDER ----
     size_t rc;
     while (jobState.claimRender(specs.chunks, rc)) {
-        std::cout << "Processing " << rc << " / " << specs.chunks << "\n";
         processChunkScalar(job, specs, rc);
         jobState.reportRender();
     }
-
-    puts("OUTTA JOB");
 }
 
 } // namespace engine

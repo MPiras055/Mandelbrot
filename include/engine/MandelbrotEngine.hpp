@@ -55,8 +55,7 @@ public:
     static constexpr double getPerturbationThreshold()     { return ZOOM_PTB_THRESH; }
     static constexpr double getEscapeTimeDoubleThreshold() { return ZOOM_ETA_DOUBLE_THRESH; }
 
-    /// Perturbation reference rebuilds so far (telemetry; stays flat while panning
-    /// reuses the cached reference).
+    /// Perturbation reference rebuilds so far (telemetry; one per rendered PTB frame).
     uint64_t ptbRebuildCount() const { return ptbEngine.rebuildCount(); }
 
 private:

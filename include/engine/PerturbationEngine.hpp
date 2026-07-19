@@ -79,7 +79,11 @@ class PerturbationEngine {
         unsigned int iterations{0};            // orbit depth this cache was built to
         bool valid{false};
 
-        void build(std::complex<core::BigFloat> ref, size_t max_iterations) {
+        /// @return the actual orbit length (== max_iterations if the reference never
+        /// escaped). Polls @p job so a long BigFloat build aborts promptly when the
+        /// frame is superseded; on abort it returns early with the cache left invalid
+        /// (the caller checks and does not publish it).
+        size_t build(const job::RenderJob& job, std::complex<core::BigFloat> ref, size_t max_iterations) {
             this->iterations = max_iterations;
             reference = ref;
             
@@ -104,6 +108,9 @@ class PerturbationEngine {
             size_t actual_length = 0;
     
             for (size_t i = 0; i < max_iterations; i++) {
+                // Poll abort off the hot path so a superseded frame drops its build fast.
+                if ((i & 0xFF) == 0 && job.aborted()) return actual_length;
+
                 // 1. Store current state (cast center to double for the fast per-pixel loop)
                 double current_z_r = static_cast<double>(z_r);
                 double current_z_i = static_cast<double>(z_i);
@@ -175,7 +182,8 @@ class PerturbationEngine {
             }
     
             this->valid = true;
-        }  
+            return actual_length;
+        }
     };
     ReferenceCache cacheSlots_[2];
     std::atomic<ReferenceCache*> activeCache_{nullptr};   // nullptr => must rebuild
@@ -206,7 +214,8 @@ public:
     /// Three-phase per-job driver (validate → rebuild → render). Defined in the .cpp.
     void processPerturbationJob(job::RenderJob& job);
 
-    /// Number of reference-orbit rebuilds so far (0 while the cache is being reused).
+    /// Number of reference-orbit rebuilds so far (increments once per frame now that
+    /// the reference is rebuilt unconditionally).
     uint64_t rebuildCount() const noexcept { return rebuilds_.load(std::memory_order_relaxed); }
 
     static inline size_t getChunks(unsigned int width, unsigned int height) noexcept {

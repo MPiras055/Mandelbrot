@@ -141,13 +141,22 @@ private:
             return;
         }
 
-        // One frame at a time, except a settle may preempt an in-flight preview.
-        const bool preemptsPreview = inFlight_ && inFlightScale_ > 1.0f && fullRes;
-        if (inFlight_ && !preemptsPreview) return;
+        // Newest-wins preemption. A newer frame preempts the in-flight one when:
+        //   - the in-flight frame is a slow FULL-RES pass (any new frame preempts it —
+        //     this is what keeps input responsive during a heavy render), or
+        //   - a settle preempts an in-flight preview.
+        // A preview does NOT preempt another in-flight preview (previews are fast; that
+        // would just thrash aborts) — the latest camera is picked up when it completes.
+        if (inFlight_) {
+            const bool inflightFullRes = (inFlightScale_ == 1.0f);
+            const bool preempt = inflightFullRes || fullRes;
+            if (!preempt) return;
+        }
 
         auto [rw, rh] = renderDims();
         const unsigned iters = fullRes ? sidebar_.settings.activeRefiningIters
                                        : sidebar_.settings.panningIters;
+        // try_push aborts whatever is in flight (newest wins); backpressure via false.
         if (engine_.requestFrame({ cam_, rw, rh, iters })) {
             inFlight_      = true;
             inFlightScale_ = renderScale_;
