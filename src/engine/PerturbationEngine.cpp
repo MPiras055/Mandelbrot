@@ -78,6 +78,13 @@ void PerturbationEngine::processChunkScalar(
     const std::vector<std::vector<BLA>>& blaLevels = cache->blaLevels;
     const int num_bla_levels = static_cast<int>(blaLevels.size());
 
+    // Stored reference points are Z_0..Z_{L-1}, all bounded (build() never stores the
+    // escaping value). Rebasing reads Z_m at the top of the walk, so m must never exceed
+    // `last_ref`. A degenerate reference (escaped at once) can't be perturbed against.
+    const size_t L = valid_orbit_size;
+    if (L < 2 || num_bla_levels == 0) return;
+    const unsigned int last_ref = static_cast<unsigned int>(L - 1);
+
     for (int py = tile_py; py < end_py; py++) {
         core::Pixel* const row_ptr = raw_canvas + (py * specs.width);
         
@@ -88,38 +95,60 @@ void PerturbationEngine::processChunkScalar(
             double screen_dx = base_screen_xMin + (px * specs.pixelStep.real());
             double dc_real = cache_offset_x + screen_dx;
 
-            double dx = 0.0, dy = 0.0;
-            unsigned int iter = 0;
+            double dx = 0.0, dy = 0.0;   // δ, relative to Z_m
+            unsigned int n = 0;          // TRUE iteration count — drives the colour
+            unsigned int m = 0;          // index into the reference orbit (cycles)
 
             double final_r2 = 0.0;
             bool escaped = false;
-            bool glitched = false;
 
-            // ---- BLA walk: greedily skip runs of iterations while δ stays inside the
-            // local validity radius; drop to a single perturbation step (with the
-            // nonlinear δ² term) only when δ grows past it — i.e. approaching escape. ----
-            const unsigned int bound = static_cast<unsigned int>(
-                std::min(valid_orbit_size, static_cast<size_t>(max_iter)));
+            // ---- Perturbation walk with Zhuoran REBASING ----
+            // A short reference is not a defect: when it is exhausted (or when δ dominates
+            // the full value, i.e. the classic Pauldelbrot cancellation), re-express the
+            // pixel against Z_0 = 0 by setting δ ← z. That is exact (z = Z_m + δ, Z_0 = 0)
+            // and costs nothing, so ANY reference can track a pixel to arbitrary depth.
+            // BLA runs skip 2^l iterations at a time while δ stays inside the validity
+            // radius. `dc` is invariant under a rebase, which is what makes this exact.
+            while (n < max_iter) {
+                // Full value at the current reference index (m <= last_ref is invariant).
+                double zr = orbitCache[m].center.real();
+                double zi = orbitCache[m].center.imag();
+                const double fr = zr + dx, fi = zi + dy;
+                const double r2 = fr * fr + fi * fi;
 
-            while (iter < bound) {
+                if (r2 > 4.0) { final_r2 = r2; escaped = true; break; }
+
+                // Rebase when δ dominates the full value, or when one more step would run
+                // off the end of the reference orbit. Z_0 = 0 by construction, so the
+                // reference point must be re-zeroed here too — the single-step branch below
+                // reads zr/zi and would otherwise apply the PRE-rebase Z_m against the
+                // post-rebase δ, injecting a spurious 2·Z_old·δ term at every rebase.
+                if (r2 < dx * dx + dy * dy || m >= last_ref) {
+                    dx = fr; dy = fi;
+                    m  = 0;
+                    zr = 0.0; zi = 0.0;
+                }
+
                 const double d2 = dx * dx + dy * dy;
 
-                // Largest usable BLA level at `iter`: the run starts at a multiple of
-                // 2^l, must fit within `bound`, and its radius must contain δ.
-                const int maxL = (iter == 0)
+                // Largest usable BLA level at `m`: the run starts at a multiple of 2^l,
+                // must stay within the orbit and the iteration budget, and its validity
+                // radius must contain δ.
+                const int maxL = (m == 0)
                     ? (num_bla_levels - 1)
-                    : std::min(num_bla_levels - 1, static_cast<int>(__builtin_ctz(iter)));
+                    : std::min(num_bla_levels - 1, static_cast<int>(__builtin_ctz(m)));
 
                 bool applied = false;
                 for (int l = maxL; l >= 0; --l) {
                     const unsigned int step = 1u << l;
-                    if (iter + step > bound) continue;
-                    const BLA& b = blaLevels[l][iter >> l];
+                    if (m + step > last_ref) continue;
+                    if (n + step > max_iter)  continue;
+                    const BLA& b = blaLevels[l][m >> l];
                     if (d2 < b.r2) {
                         const double ndx = (b.Ar * dx - b.Ai * dy) + (b.Br * dc_real - b.Bi * dc_imag);
                         const double ndy = (b.Ar * dy + b.Ai * dx) + (b.Br * dc_imag + b.Bi * dc_real);
                         dx = ndx; dy = ndy;
-                        iter += step;
+                        m += step; n += step;
                         applied = true;
                         break;
                     }
@@ -127,46 +156,23 @@ void PerturbationEngine::processChunkScalar(
 
                 if (!applied) {
                     // Single perturbation step (keeps the nonlinear δ² term).
-                    const double zr = orbitCache[iter].center.real();
-                    const double zi = orbitCache[iter].center.imag();
                     const double dx2 = dx * dx, dy2 = dy * dy;
                     const double ndx = 2.0 * (zr * dx - zi * dy) + dx2 - dy2 + dc_real;
                     const double ndy = 2.0 * (zr * dy + zi * dx) + 2.0 * dx * dy + dc_imag;
-                    if (std::abs(ndx) > 1e150 || std::abs(ndy) > 1e150) { glitched = true; break; }
+                    // δ blowing up past any representable orbit means the point has left
+                    // the disc for good — treat it as escaped rather than stranding it.
+                    if (std::abs(ndx) > 1e150 || std::abs(ndy) > 1e150) {
+                        final_r2 = 8.0; escaped = true; break;
+                    }
                     dx = ndx; dy = ndy;
-                    ++iter;
-                }
-
-                // Escape test at the landing iteration (δ is bounded across a BLA run,
-                // so no escape can be skipped mid-run).
-                if (iter < valid_orbit_size) {
-                    const double zr = orbitCache[iter].center.real();
-                    const double zi = orbitCache[iter].center.imag();
-                    const double fr = zr + dx, fi = zi + dy;
-                    const double total_r2 = fr * fr + fi * fi;
-                    if (total_r2 > 4.0) { final_r2 = total_r2; escaped = true; break; }
-                    // Pauldelbrot: the full point collapsed relative to δ → this reference
-                    // can't track the pixel; flag it for exact resolution below.
-                    if (total_r2 < GLITCH_EPS * (dx * dx + dy * dy)) { glitched = true; break; }
+                    ++m; ++n;
                 }
             }
 
-            // ---- Classify the pixel ----
-            if (escaped) {
-                // Resolved: escaped within the primary reference.
-                row_ptr[px] = util::ColorUtil::Compute(iter, max_iter, static_cast<float>(final_r2), gradient);
-            } else if (!glitched && iter >= max_iter) {
-                // Resolved: survived the full budget without escaping ⇒ interior.
-                row_ptr[px] = util::ColorUtil::Compute(max_iter, max_iter, 0.0f, gradient);
-            } else {
-                // Unresolved: glitched, or outran a reference shorter than the budget.
-                // Record it in the frame-global buffer for the resolution phase (Phase 4);
-                // its screen offset is recomputed there from (px,py). One append per pixel,
-                // so the index can never exceed the width*height-sized buffer.
-                const size_t i = resolveCount_[0].fetch_add(1, std::memory_order_relaxed);
-                resolveBuf_[0][i] = StrandedPixel{
-                    static_cast<uint32_t>(px), static_cast<uint32_t>(py), iter };
-            }
+            // ---- Colour: escape count, or a genuine interior hit at the full budget ----
+            row_ptr[px] = escaped
+                ? util::ColorUtil::Compute(n, max_iter, static_cast<float>(final_r2), gradient)
+                : util::ColorUtil::Compute(max_iter, max_iter, 0.0f, gradient);
         }
     }
 }

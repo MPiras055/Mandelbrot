@@ -116,10 +116,16 @@ class PerturbationEngine {
         /// (the caller checks and does not publish it).
         size_t build(const job::RenderJob& job, std::complex<core::BigFloat> ref,
                      size_t max_iterations, double dc_max_in) {
+            // Invalidate up front: this cache object is a per-worker singleton that may
+            // still be pointed at by `lastRef_` from an EARLIER successful build. If this
+            // build aborts midway we must not leave `valid == true` over a fresh short
+            // orbit paired with the previous build's `blaLevels` — a reader would then
+            // index a mismatched (possibly smaller) BLA tree.
+            this->valid = false;
             this->iterations = max_iterations;
             this->dc_max = dc_max_in;
             reference = ref;
-            
+
             // orbit: reset size to 0 (keeps capacity); records are appended with
             // push_back below so orbit.size() reflects the true orbit length.
             orbit.init(max_iterations);
@@ -132,7 +138,9 @@ class PerturbationEngine {
 
             for (size_t i = 0; i < max_iterations; i++) {
                 // Poll abort off the hot path so a superseded frame drops its build fast.
-                if ((i & 0xFF) == 0 && job.aborted()) return actual_length;
+                // Drop the stale BLA tree on the way out so no reader can pair it with the
+                // partial orbit left behind (`valid` stays false — see the note above).
+                if ((i & 0xFF) == 0 && job.aborted()) { blaLevels.clear(); orbitLen = 0; return actual_length; }
 
                 // Store Z_i (cast to double for the fast per-pixel loop + BLA table).
                 orbit.push_back(OrbitRecord{
