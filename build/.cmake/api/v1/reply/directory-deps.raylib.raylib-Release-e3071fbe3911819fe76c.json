@@ -1,0 +1,143 @@
+{
+	"backtraceGraph" : 
+	{
+		"commands" : 
+		[
+			"install",
+			"include"
+		],
+		"files" : 
+		[
+			"deps/raylib/cmake/InstallConfigurations.cmake",
+			"deps/raylib/src/CMakeLists.txt"
+		],
+		"nodes" : 
+		[
+			{
+				"file" : 1
+			},
+			{
+				"command" : 1,
+				"file" : 1,
+				"line" : 146,
+				"parent" : 0
+			},
+			{
+				"file" : 0,
+				"parent" : 1
+			},
+			{
+				"command" : 0,
+				"file" : 0,
+				"line" : 1,
+				"parent" : 2
+			},
+			{
+				"command" : 0,
+				"file" : 0,
+				"line" : 23,
+				"parent" : 2
+			},
+			{
+				"command" : 0,
+				"file" : 0,
+				"line" : 24,
+				"parent" : 2
+			},
+			{
+				"command" : 0,
+				"file" : 0,
+				"line" : 25,
+				"parent" : 2
+			},
+			{
+				"command" : 0,
+				"file" : 0,
+				"line" : 30,
+				"parent" : 2
+			}
+		]
+	},
+	"installers" : 
+	[
+		{
+			"backtrace" : 3,
+			"component" : "Unspecified",
+			"destination" : "lib64",
+			"paths" : 
+			[
+				"deps/raylib/raylib/libraylib.a"
+			],
+			"targetId" : "raylib::@6f9cc4bfba4938b061a0",
+			"targetIndex" : 2,
+			"type" : "target"
+		},
+		{
+			"backtrace" : 3,
+			"component" : "Unspecified",
+			"destination" : "include",
+			"paths" : 
+			[
+				"deps/raylib/src/raylib.h",
+				"deps/raylib/src/rcamera.h",
+				"deps/raylib/src/rlgl.h",
+				"deps/raylib/src/raymath.h"
+			],
+			"type" : "file"
+		},
+		{
+			"backtrace" : 4,
+			"component" : "Unspecified",
+			"destination" : "lib64/pkgconfig",
+			"paths" : 
+			[
+				"build/deps/raylib/raylib/raylib.pc"
+			],
+			"type" : "file"
+		},
+		{
+			"backtrace" : 5,
+			"component" : "Unspecified",
+			"destination" : "lib64/cmake/raylib",
+			"paths" : 
+			[
+				"build/deps/raylib/raylib/raylib-config-version.cmake"
+			],
+			"type" : "file"
+		},
+		{
+			"backtrace" : 6,
+			"component" : "Unspecified",
+			"destination" : "lib64/cmake/raylib",
+			"paths" : 
+			[
+				"build/deps/raylib/raylib/raylib-config-version.cmake",
+				"build/deps/raylib/raylib/raylib-config.cmake"
+			],
+			"type" : "file"
+		},
+		{
+			"backtrace" : 7,
+			"component" : "Unspecified",
+			"destination" : "lib64/cmake/raylib",
+			"exportName" : "raylib-targets",
+			"exportTargets" : 
+			[
+				{
+					"id" : "raylib::@6f9cc4bfba4938b061a0",
+					"index" : 2
+				}
+			],
+			"paths" : 
+			[
+				"deps/raylib/raylib/CMakeFiles/Export/242053f21705361cae06cecf1a5dc4f4/raylib-targets.cmake"
+			],
+			"type" : "export"
+		}
+	],
+	"paths" : 
+	{
+		"build" : "deps/raylib/raylib",
+		"source" : "deps/raylib/src"
+	}
+}
