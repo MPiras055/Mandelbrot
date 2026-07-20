@@ -1,8 +1,49 @@
 #include "engine/PerturbationEngine.hpp"
 #include <cmath>
 #include <algorithm>
+#include <vector>
 
 namespace engine {
+
+namespace {
+
+// Pauldelbrot glitch threshold (squared): |Z+δ|² < eps·|δ|² ⇒ catastrophic cancellation.
+constexpr double GLITCH_EPS = 1e-6;
+
+struct OrbitBuildResult {
+    size_t length;      // number of stored orbit points (== escape iter if it escaped)
+    bool   escaped;     // the reference point itself escaped before max_iter
+    double final_r2;    // |z|² at escape (valid only when escaped)
+};
+
+// Build the absolute reference orbit at `abs_center` to `max_iter`, storing Z_i as
+// doubles in `out` (reused buffer). Abort-polled every 256 steps. Reports whether the
+// reference point escaped so the caller can colour it directly.
+OrbitBuildResult buildOrbitBigFloat(const job::RenderJob& job,
+                                    const std::complex<BigFloat>& abs_center,
+                                    unsigned int max_iter,
+                                    std::vector<ComplexDouble>& out) {
+    out.reserve(max_iter);   // stable storage: no realloc during the emplace_back loop
+    out.clear();
+    BigFloat z_r = 0.0, z_i = 0.0;
+    const BigFloat c_r = abs_center.real();
+    const BigFloat c_i = abs_center.imag();
+
+    for (unsigned int i = 0; i < max_iter; ++i) {
+        if ((i & 0xFF) == 0 && job.aborted()) return { out.size(), false, 0.0 };
+        out.emplace_back(static_cast<double>(z_r), static_cast<double>(z_i));
+
+        const BigFloat nzr = z_r * z_r - z_i * z_i + c_r;
+        const BigFloat nzi = BigFloat(2.0) * z_r * z_i + c_i;
+        z_r = nzr; z_i = nzi;
+
+        const double r2 = static_cast<double>(z_r * z_r + z_i * z_i);
+        if (r2 > 4.0) return { out.size(), true, r2 };   // escaped at iteration out.size()
+    }
+    return { out.size(), false, 0.0 };   // reached max_iter without escaping (interior)
+}
+
+} // namespace
 
 /**
  * @brief Processes a single chunk of the screen using Perturbation Theory and Taylor Series Approximation.
@@ -36,16 +77,6 @@ void PerturbationEngine::processChunkScalar(
     // BLA merge tree for this reference (built in ReferenceCache::buildBLA).
     const std::vector<std::vector<BLA>>& blaLevels = cache->blaLevels;
     const int num_bla_levels = static_cast<int>(blaLevels.size());
-
-    // Cap per-tile BigFloat fallbacks so a short/inadequate reference degrades to a fast,
-    // slightly-wrong tile instead of freezing this worker. Low-res uses a probe-picked
-    // deep reference so fallbacks should be rare — give it ZERO budget (over-orbit pixels
-    // are approximated as interior, keeping previews fast); high-res keeps a real budget.
-    int fallback_budget = specs.fullReference ? 512 : 0;
-
-    // Pauldelbrot glitch threshold (squared): |Z+δ|² < eps·|δ|² ⇒ catastrophic
-    // cancellation (the reference is inadequate for this pixel) ⇒ resolve it exactly.
-    constexpr double GLITCH_EPS = 1e-6;
 
     for (int py = tile_py; py < end_py; py++) {
         core::Pixel* const row_ptr = raw_canvas + (py * specs.width);
@@ -120,59 +151,22 @@ void PerturbationEngine::processChunkScalar(
                 }
             }
 
-            // ==============================================================================
-            // BIGFLOAT RESOLUTION (glitched or ran out of a short reference)
-            // ==============================================================================
-            // Recompute the pixel exactly in full BigFloat — bounded by the per-tile budget
-            // so no single tile can freeze the worker.
-            if (!escaped && (glitched || iter == valid_orbit_size) && iter < max_iter
-                && fallback_budget > 0) {
-                --fallback_budget;
-                BigFloat abs_c_r = specs.reference.real() + BigFloat(screen_dx);
-                BigFloat abs_c_i = specs.reference.imag() + BigFloat(screen_dy);
-
-                BigFloat bf_z_r = 0.0;
-                BigFloat bf_z_i = 0.0;
-                unsigned int bf_iter = 0;
-
-                while (bf_iter < max_iter) {
-
-                    BigFloat bf_z_r_sq = bf_z_r * bf_z_r;
-                    BigFloat bf_z_i_sq = bf_z_i * bf_z_i;
-
-                    double r2 = static_cast<double>(bf_z_r_sq + bf_z_i_sq);
-                    if (r2 > 4.0) {
-                        final_r2 = r2;
-                        escaped = true;
-                        break;
-                    }
-
-                    BigFloat temp_i = BigFloat(2.0) * bf_z_r * bf_z_i + abs_c_i;
-                    bf_z_r = bf_z_r_sq - bf_z_i_sq + abs_c_r;
-                    bf_z_i = temp_i;
-
-                    bf_iter++;
-                }
-                
-                iter = bf_iter;
-                if (!escaped) {
-                    iter = max_iter;
-                }
-                glitched = false;   // resolved exactly
+            // ---- Classify the pixel ----
+            if (escaped) {
+                // Resolved: escaped within the primary reference.
+                row_ptr[px] = util::ColorUtil::Compute(iter, max_iter, static_cast<float>(final_r2), gradient);
+            } else if (!glitched && iter >= max_iter) {
+                // Resolved: survived the full budget without escaping ⇒ interior.
+                row_ptr[px] = util::ColorUtil::Compute(max_iter, max_iter, 0.0f, gradient);
+            } else {
+                // Unresolved: glitched, or outran a reference shorter than the budget.
+                // Record it in the frame-global buffer for the resolution phase (Phase 4);
+                // its screen offset is recomputed there from (px,py). One append per pixel,
+                // so the index can never exceed the width*height-sized buffer.
+                const size_t i = resolveCount_[0].fetch_add(1, std::memory_order_relaxed);
+                resolveBuf_[0][i] = StrandedPixel{
+                    static_cast<uint32_t>(px), static_cast<uint32_t>(py), iter };
             }
-            // Budget spent (or low-res, budget 0): approximate the unresolved pixel as
-            // interior so the tile can't stall and we avoid speckle.
-            else if (!escaped && (glitched || iter == valid_orbit_size) && iter < max_iter) {
-                iter = max_iter;
-                glitched = false;
-            }
-
-            if (job_ref.aborted()) {
-                return;
-            }
-
-            // Final Color Write
-            row_ptr[px] = util::ColorUtil::Compute(iter, max_iter, static_cast<float>(final_r2), gradient);
         }
     }
 }
@@ -256,6 +250,10 @@ void PerturbationEngine::processPerturbationJob(job::RenderJob& job) {
             lastRef_.store(local, std::memory_order_release);   // publishes the metadata above
         }
         rebuilds_.fetch_add(1, std::memory_order_relaxed);
+        // Reset the frame-global resolve buffers BEFORE publishing: the publishCache
+        // release pairs with every worker's waitCache acquire, so this happens-before any
+        // render-time append into resolveBuf_[0].
+        prepareResolveFrame(specs.width, specs.height);
         jobState.publishCache(job.aborted() ? PTB::CACHE_ABORT : static_cast<void*>(local));
     };
 
@@ -284,8 +282,10 @@ void PerturbationEngine::processPerturbationJob(job::RenderJob& job) {
             // One worker republishes the existing reference; the rest fall through to waitCache.
             void* expected = nullptr;
             if (jobState.rebaseMatrix.compare_exchange_strong(
-                    expected, reinterpret_cast<void*>(1), std::memory_order_acq_rel))
+                    expected, reinterpret_cast<void*>(1), std::memory_order_acq_rel)) {
+                prepareResolveFrame(specs.width, specs.height);   // reset before publish (see publishBuilt)
                 jobState.publishCache(job.aborted() ? PTB::CACHE_ABORT : static_cast<void*>(reuse));
+            }
             goto render_phase;
         }
 
@@ -354,7 +354,6 @@ void PerturbationEngine::processPerturbationJob(job::RenderJob& job) {
             if (job.aborted()) return;
 
             if (leader) {
-                puts("HIGH RES CACHE ITERATION");
                 sharedMatrix.shrinkAndCenter(0.25);   // recenter on the deepest cell
                 if (std::abs(sharedMatrix.stepSize.real()) <= limit_x ||
                     std::abs(sharedMatrix.stepSize.imag()) <= limit_y) {
@@ -382,12 +381,171 @@ render_phase:
     if (cachePtr == PTB::CACHE_ABORT) return;
     const ReferenceCache* __restrict__ cache = static_cast<const ReferenceCache*>(cachePtr);
 
-    // ---- Phase 2: RENDER ----
+    // ---- Phase 2: RENDER (stranded pixels recorded into the frame-global buffer) ----
     size_t rc;
     while (jobState.claimRender(specs.chunks, rc)) {
-        std::cout << "Processing chunk " << rc << "\n";
         processChunkScalar(job, specs, cache, rc);
         jobState.reportRender();
+    }
+
+    // ---- Phase 3: RESOLVE — barrier until the whole frame is rendered (buffer complete),
+    // then cooperatively re-perturb the stranded pixels against shared secondaries. ----
+    if (!jobState.waitRenderComplete(specs.chunks)) return;   // false on abort
+    processResolvePhase(job, specs);
+}
+
+/**
+ * @brief Frame-global glitch resolution (Phase 4). All workers cooperate: stranded pixels
+ * recorded during render are re-perturbed against ONE shared secondary reference per round,
+ * so a glitched region resolves coherently regardless of render-tile boundaries. Rounds are
+ * bounded; the round leader picks the deepest survivor as the next secondary. Leftovers are
+ * approximated as interior. Gates job completion via markResolveComplete().
+ */
+void PerturbationEngine::processResolvePhase(job::RenderJob& job,
+                                             const job::RenderJob::JobSpecs& specs) {
+    auto& jobState = job.getState<job::RenderJob::PTBJob>();
+
+    core::Pixel* const __restrict__ raw_canvas = back_buf_ref;
+    const unsigned int max_iter = specs.iterations;
+    const double base_screen_xMin = -(specs.width  / 2.0) * specs.pixelStep.real();
+    const double base_screen_yMin = -(specs.height / 2.0) * specs.pixelStep.imag();
+
+    constexpr uint32_t MAX_ROUNDS     = 6;
+    constexpr size_t   RESOLVE_RANGES = 256;   // fixed per-round partition (barrier count)
+
+    auto screenDx = [&](uint32_t px){ return base_screen_xMin + px * specs.pixelStep.real(); };
+    auto screenDy = [&](uint32_t py){ return base_screen_yMin + py * specs.pixelStep.imag(); };
+    auto colourAt = [&](uint32_t px, uint32_t py, unsigned int it, double r2){
+        raw_canvas[static_cast<size_t>(py) * specs.width + px] =
+            util::ColorUtil::Compute(it, max_iter, static_cast<float>(r2), gradient);
+    };
+
+    // Leader helper: pick the deepest stranded pixel in buf[sel][0..count) and build its
+    // secondary orbit into secOrbit_ + metadata. @return false on abort / degenerate build.
+    auto buildSecondary = [&](int sel, size_t count) -> bool {
+        const StrandedPixel* buf = resolveBuf_[sel].data();
+        size_t pick = 0;
+        for (size_t i = 1; i < count; ++i)
+            if (buf[i].brk > buf[pick].brk) pick = i;
+        secPickIdx_ = pick;
+        secRefSdx_ = screenDx(buf[pick].px);
+        secRefSdy_ = screenDy(buf[pick].py);
+        const std::complex<BigFloat> abs_center{
+            specs.reference.real() + BigFloat(secRefSdx_),
+            specs.reference.imag() + BigFloat(secRefSdy_)
+        };
+        const OrbitBuildResult r = buildOrbitBigFloat(job, abs_center, max_iter, secOrbit_);
+        secLen_ = r.length; secEscaped_ = r.escaped; secFinalR2_ = r.final_r2;
+        if (job.aborted() || r.length == 0) return false;
+        // Colour the reference pixel directly: perturbing it against its own orbit (dc=0)
+        // keeps δ=0 and can never detect its escape, so resolve it from the build result.
+        if (r.escaped) colourAt(buf[pick].px, buf[pick].py, static_cast<unsigned int>(r.length), r.final_r2);
+        else           colourAt(buf[pick].px, buf[pick].py, max_iter, 0.0);
+        return true;
+    };
+
+    // ---- round 0 bootstrap: one elected worker builds secondary[0] ----
+    uint32_t claimed = 0;
+    if (resolveInit_.compare_exchange_strong(claimed, 1, std::memory_order_acq_rel)) {
+        const size_t count = resolveCount_[0].load(std::memory_order_acquire);
+        if (count == 0 || !buildSecondary(0, count)) {
+            jobState.markResolveComplete();   // nothing stranded (or aborted)
+            return;
+        }
+        resolveCurSel_ = 0;
+        jobState.beginResolveRound(0);        // publishes secondary[0] + opens round 0
+    }
+
+    // ---- round loop (all workers) ----
+    uint32_t round = 0;
+    while (true) {
+        if (!jobState.waitResolveReady(round)) return;   // phase over / aborted
+
+        bool   leader = false;
+        size_t range;
+        while (jobState.claimResolve(round, RESOLVE_RANGES, range)) {
+            // Read the round's shared secondary state AFTER a successful claim: a successful
+            // claim proves the round is still current, so no leader is concurrently
+            // rebuilding secOrbit_ / resolveCurSel_ (the leader only advances once all
+            // RESOLVE_RANGES ranges are reported, which can't happen while this range is
+            // still in flight). This keeps the non-atomic reads race-free.
+            const int    sel   = resolveCurSel_;
+            const int    nxt   = sel ^ 1;
+            const size_t count = resolveCount_[sel].load(std::memory_order_acquire);
+            const StrandedPixel* __restrict__ curBuf = resolveBuf_[sel].data();
+            const ComplexDouble* __restrict__ orb    = secOrbit_.data();
+            const size_t       S       = secLen_;
+            const unsigned int bound   = static_cast<unsigned int>(std::min(S, static_cast<size_t>(max_iter)));
+            const double       ref_sdx = secRefSdx_, ref_sdy = secRefSdy_;
+            const size_t       pickIdx = secPickIdx_;
+            const size_t       range_sz = (count + RESOLVE_RANGES - 1) / RESOLVE_RANGES;
+
+            const size_t begin = range * range_sz;
+            const size_t end   = std::min(begin + range_sz, count);
+            for (size_t i = begin; i < end; ++i) {
+                if (i == pickIdx) continue;   // the reference pixel, coloured in buildSecondary
+                const StrandedPixel& p = curBuf[i];
+                const double dcr = screenDx(p.px) - ref_sdx;
+                const double dci = screenDy(p.py) - ref_sdy;
+
+                double dx = 0.0, dy = 0.0;
+                unsigned int n = 0;
+                double fr2 = 0.0;
+                bool escaped = false, glitched = false;
+
+                while (n < bound) {
+                    const double zr = orb[n].real(), zi = orb[n].imag();
+                    const double ndx = 2.0 * (zr * dx - zi * dy) + dx * dx - dy * dy + dcr;
+                    const double ndy = 2.0 * (zr * dy + zi * dx) + 2.0 * dx * dy + dci;
+                    if (std::abs(ndx) > 1e150 || std::abs(ndy) > 1e150) { glitched = true; break; }
+                    dx = ndx; dy = ndy;
+                    ++n;
+                    if (n < S) {
+                        const double zr1 = orb[n].real(), zi1 = orb[n].imag();
+                        const double fr = zr1 + dx, fi = zi1 + dy;
+                        const double t = fr * fr + fi * fi;
+                        if (t > 4.0) { fr2 = t; escaped = true; break; }
+                        if (t < GLITCH_EPS * (dx * dx + dy * dy)) { glitched = true; break; }
+                    }
+                }
+
+                if (escaped) {
+                    colourAt(p.px, p.py, n, fr2);
+                } else if (!glitched && n >= max_iter) {
+                    colourAt(p.px, p.py, max_iter, 0.0);
+                } else {
+                    // Still unresolved → carry to the next round with a deeper breakout.
+                    const size_t j = resolveCount_[nxt].fetch_add(1, std::memory_order_relaxed);
+                    resolveBuf_[nxt][j] = StrandedPixel{ p.px, p.py, n };
+                }
+            }
+            leader = jobState.reportResolve(RESOLVE_RANGES);
+        }
+
+        if (job.aborted()) return;
+
+        if (leader) {
+            // Safe to read/write the shared state directly: as the round's last reporter the
+            // leader is the sole thread touching it now (all ranges reported ⇒ no worker is
+            // still processing this round, and only the leader advances).
+            const int    sel = resolveCurSel_;
+            const int    nxt = sel ^ 1;
+            const size_t nextCount = resolveCount_[nxt].load(std::memory_order_acquire);
+            if (nextCount == 0 || round + 1 >= MAX_ROUNDS) {
+                // Finalize: whatever survived (rare) → interior colour.
+                const StrandedPixel* nb = resolveBuf_[nxt].data();
+                for (size_t i = 0; i < nextCount; ++i)
+                    colourAt(nb[i].px, nb[i].py, max_iter, 0.0);
+                jobState.markResolveComplete();
+                return;
+            }
+            // Swap: the survivors become the new "cur"; clear the old "cur" as the new "next".
+            resolveCurSel_ = nxt;
+            resolveCount_[sel].store(0, std::memory_order_relaxed);
+            if (!buildSecondary(nxt, nextCount)) { jobState.markResolveComplete(); return; }
+            jobState.beginResolveRound(round + 1);   // publishes secondary[r+1] + opens it
+        }
+        ++round;
     }
 }
 

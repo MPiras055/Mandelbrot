@@ -49,6 +49,10 @@ struct PerturbationJob {
     static constexpr uint64_t REBASE_ITER_SHIFT = 32;
     static constexpr uint64_t REBASE_CELL_MASK  = 0xFFFFFFFFull;
 
+    // --- resolve index encoding: [ round : 32 | range : 32 ] (mirrors rebase) ---
+    static constexpr uint64_t RESOLVE_ROUND_SHIFT = 32;
+    static constexpr uint32_t RESOLVE_TERMINAL     = 0xFFFFFFFFu;   // "no more rounds"
+
     PerturbationJob()  noexcept = default;
     ~PerturbationJob() noexcept {}
     PerturbationJob(const PerturbationJob&) = delete;
@@ -72,6 +76,19 @@ struct PerturbationJob {
     // CACHE_ABORT = the job aborted before a cache was published.
     inline static void* const CACHE_ABORT = reinterpret_cast<void*>(static_cast<std::uintptr_t>(-1));
     std::atomic<void*> refCache{nullptr};
+
+    // ---- Phase 4: RESOLVE (frame-global glitch resolution) ----
+    // A separate work-stealing phase that runs AFTER render: stranded pixels (recorded in
+    // an engine-owned global buffer) are re-perturbed against ONE shared secondary
+    // reference per round, so a glitched blob is resolved coherently (no per-tile seams).
+    // Round readiness is published in `resolveReady` (= highest ready round + 1;
+    // RESOLVE_TERMINAL once finished); within a round, ranges are claimed via `resolveIdx`
+    // and counted in `resolveDone` exactly like the rebase pair. `resolveComplete` gates
+    // job completion so a frame is never harvested mid-resolution.
+    CACHE_ALIGN std::atomic<uint64_t> resolveIdx{0};   // [round:32 | range:32]
+    std::atomic<uint64_t> resolveDone{0};              // ranges reported (per-round, mod range_total)
+    std::atomic<uint32_t> resolveReady{0};             // highest ready round + 1 (0 = none)
+    std::atomic<bool>     resolveComplete{false};      // resolution finished (or aborted)
 
     /// Leader: publish the reference-cache pointer. CAS nullptr→cache; loses to abort.
     /// @return false if the job was aborted before publishing.
@@ -98,15 +115,18 @@ struct PerturbationJob {
     // LIFECYCLE (called by RenderJob via std::visit; the render pair is the gate)
     // =========================================================================
 
-    /// True once every render ticket is accounted for (completed or abort-drained):
-    /// the slot is then safe to recycle.
+    /// True once every render ticket is accounted for (completed or abort-drained) AND the
+    /// resolution phase has finished: the slot is then safe to recycle and the frame safe
+    /// to harvest (never mid-resolution).
     bool done(size_t render_total) const noexcept {
-        return (renderDone.load(std::memory_order_acquire) & STD_MASK) == render_total;
+        return ((renderDone.load(std::memory_order_acquire) & STD_MASK) == render_total)
+            && resolveComplete.load(std::memory_order_acquire);
     }
 
-    /// True when the render phase finished cleanly (no abort bit).
+    /// True when the render phase finished cleanly (no abort bit) and resolution is done.
     bool completed(size_t render_total) const noexcept {
-        return renderDone.load(std::memory_order_acquire) == render_total;
+        return (renderDone.load(std::memory_order_acquire) == render_total)
+            && resolveComplete.load(std::memory_order_acquire);
     }
 
     /// True once abort() has been issued on this job.
@@ -225,6 +245,84 @@ struct PerturbationJob {
         return (s & ABORT_FLAG) == 0;
     }
 
+    // =========================================================================
+    // PHASE 4 — RESOLVE (resolve pair + round-readiness signal)
+    // =========================================================================
+
+    /// Barrier: spin until every render ticket is accounted for (so the engine's global
+    /// unresolved buffer is complete) before the resolution phase reads it.
+    /// @return false if the job aborted.
+    bool waitRenderComplete(size_t render_total) noexcept {
+        while ((renderDone.load(std::memory_order_acquire) & STD_MASK) < render_total) {
+            if (aborted()) return false;
+#if defined(__x86_64__) || defined(_M_X64)
+            __builtin_ia32_pause();
+#endif
+        }
+        return !aborted();
+    }
+
+    /// Claim a range of resolve round @p expect_round. Ranges 0..range_total-1 partition the
+    /// round's unresolved list (empty ranges still claim/report to keep the barrier count).
+    /// CAS-bounded to @p expect_round so a worker never over-claims into the next round after
+    /// the aggregator advances (which would corrupt that round's buffers / barrier count).
+    /// @return false when this round is exhausted / already advanced / the job aborted.
+    [[nodiscard]] bool claimResolve(uint32_t expect_round, size_t range_total, size_t& range_out) noexcept {
+        uint64_t v = resolveIdx.load(std::memory_order_acquire);
+        for (;;) {
+            if (v & ABORT_FLAG) return false;
+            if (static_cast<uint32_t>(v >> RESOLVE_ROUND_SHIFT) != expect_round) return false;
+            const uint64_t range = v & REBASE_CELL_MASK;
+            if (range >= range_total) return false;
+            if (resolveIdx.compare_exchange_weak(v, v + 1, std::memory_order_acq_rel,
+                                                 std::memory_order_acquire)) {
+                range_out = static_cast<size_t>(range);
+                return true;
+            }
+            // v reloaded by compare_exchange_weak on failure; retry.
+        }
+    }
+
+    /// Commit a resolve range. @return true iff it was the last range of the round
+    /// (that thread becomes the aggregator: swap buffers / build the next secondary).
+    bool reportResolve(size_t range_total) noexcept {
+        const uint64_t prev = resolveDone.fetch_add(1, std::memory_order_acq_rel) & STD_MASK;
+        return ((prev + 1) % range_total) == 0;
+    }
+
+    /// Aggregator: open round @p round for claiming (reset the range index) and publish it
+    /// ready. The engine MUST have published that round's shared secondary (release) before
+    /// calling this — the store below pairs with the acquire in waitResolveReady.
+    void beginResolveRound(uint32_t round) noexcept {
+        resolveIdx.store(static_cast<uint64_t>(round) << RESOLVE_ROUND_SHIFT, std::memory_order_release);
+        resolveReady.store(round + 1, std::memory_order_release);
+        resolveReady.notify_all();
+    }
+
+    /// Follower barrier: block until round @p round is ready (or resolution ends / aborts).
+    /// @return true if round @p round is now claimable; false if the phase is over.
+    bool waitResolveReady(uint32_t round) noexcept {
+        uint32_t s = resolveReady.load(std::memory_order_acquire);
+        while (s <= round) {
+            if (resolveComplete.load(std::memory_order_acquire) || aborted()) return false;
+            resolveReady.wait(s, std::memory_order_acquire);
+            s = resolveReady.load(std::memory_order_acquire);
+        }
+        return (s != RESOLVE_TERMINAL) && !aborted();
+    }
+
+    /// Aggregator: the resolution phase is finished — unblock followers and let the job
+    /// complete. Idempotent.
+    void markResolveComplete() noexcept {
+        resolveComplete.store(true, std::memory_order_release);
+        resolveReady.store(RESOLVE_TERMINAL, std::memory_order_release);
+        resolveReady.notify_all();
+    }
+
+    bool isResolveComplete() const noexcept {
+        return resolveComplete.load(std::memory_order_acquire);
+    }
+
     /**
      * @brief: get the completion percentage of the current job
      * 
@@ -262,6 +360,11 @@ struct PerturbationJob {
         valDone.store(      0, std::memory_order_relaxed);
         rebaseDone.store(   0, std::memory_order_relaxed);
         renderDone.store(   0, std::memory_order_relaxed);
+        //reset the resolve phase
+        resolveIdx.store(     0,     std::memory_order_relaxed);
+        resolveDone.store(    0,     std::memory_order_relaxed);
+        resolveReady.store(   0,     std::memory_order_relaxed);
+        resolveComplete.store(false, std::memory_order_relaxed);
     }
 
     /**
@@ -284,6 +387,9 @@ struct PerturbationJob {
         // wake anyone parked waiting for the reference-cache publication
         refCache.store(CACHE_ABORT, std::memory_order_release);
         refCache.notify_all();
+        // poison + drain the resolve phase and unblock its barriers
+        resolveIdx.fetch_or(ABORT_FLAG, std::memory_order_acq_rel);
+        markResolveComplete();   // resolveComplete + resolveReady=TERMINAL + notify
 
         if ((last & STD_MASK) < render_total) {
             const uint64_t unclaimed = render_total - (last & STD_MASK);

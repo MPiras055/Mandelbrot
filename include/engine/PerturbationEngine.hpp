@@ -239,6 +239,41 @@ class PerturbationEngine {
         return ptr;
     }
 
+    // ---- Frame-global glitch resolution (Phase 4) ----
+    // Stranded pixels (glitched / outran a short reference) are recorded here during
+    // render, then re-perturbed against ONE shared secondary reference per round so a
+    // glitched blob resolves coherently (no per-tile seams). Double-buffered: round r
+    // reads buf[cur], appends survivors to buf[next]; the round leader swaps them.
+    struct StrandedPixel { uint32_t px, py, brk; };
+    std::vector<StrandedPixel> resolveBuf_[2];
+    std::atomic<size_t>        resolveCount_[2];
+    int                        resolveCurSel_{0};   // which buf is "cur" (leader-managed)
+    std::atomic<uint32_t>      resolveInit_{0};     // one-shot round-0 builder election
+
+    // The round's shared secondary reference (built by the round leader, read by all).
+    std::vector<ComplexDouble> secOrbit_;
+    double secRefSdx_{0.0}, secRefSdy_{0.0};
+    size_t secLen_{0};
+    bool   secEscaped_{false};
+    double secFinalR2_{0.0};
+    size_t secPickIdx_{0};   // index (in cur buf) of the pixel used as this round's secondary
+
+    // Reset per-frame resolve state + size the buffers to the whole frame. Called by the
+    // cache-publishing worker BEFORE it publishes (so the reset happens-before any render
+    // append, which happens-after every worker's waitCache).
+    void prepareResolveFrame(size_t width, size_t height) {
+        const size_t cap = width * height;
+        if (resolveBuf_[0].size() < cap) resolveBuf_[0].resize(cap);
+        if (resolveBuf_[1].size() < cap) resolveBuf_[1].resize(cap);
+        resolveCount_[0].store(0, std::memory_order_relaxed);
+        resolveCount_[1].store(0, std::memory_order_relaxed);
+        resolveCurSel_ = 0;
+        resolveInit_.store(0, std::memory_order_relaxed);
+    }
+
+    // Run the frame-global resolution phase (all workers cooperate). Defined in the .cpp.
+    void processResolvePhase(job::RenderJob& job, const job::RenderJob::JobSpecs& specs);
+
     const util::Gradient& gradient;
 
     void processChunkScalar(
