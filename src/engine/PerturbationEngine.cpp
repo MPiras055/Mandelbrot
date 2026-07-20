@@ -41,7 +41,7 @@ void PerturbationEngine::processChunkScalar(
     // slightly-wrong tile instead of freezing this worker. Low-res uses a probe-picked
     // deep reference so fallbacks should be rare — give it ZERO budget (over-orbit pixels
     // are approximated as interior, keeping previews fast); high-res keeps a real budget.
-    unsigned int fallback_budget = specs.fullReference ? 512u : 0u;
+    int fallback_budget = specs.fullReference ? 512 : 0;
 
     // Pauldelbrot glitch threshold (squared): |Z+δ|² < eps·|δ|² ⇒ catastrophic
     // cancellation (the reference is inadequate for this pixel) ⇒ resolve it exactly.
@@ -125,7 +125,8 @@ void PerturbationEngine::processChunkScalar(
             // ==============================================================================
             // Recompute the pixel exactly in full BigFloat — bounded by the per-tile budget
             // so no single tile can freeze the worker.
-            if (!escaped && (glitched || iter == valid_orbit_size) && iter < max_iter) {
+            if (!escaped && (glitched || iter == valid_orbit_size) && iter < max_iter
+                && fallback_budget > 0) {
                 --fallback_budget;
                 BigFloat abs_c_r = specs.reference.real() + BigFloat(screen_dx);
                 BigFloat abs_c_i = specs.reference.imag() + BigFloat(screen_dy);
