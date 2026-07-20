@@ -18,6 +18,7 @@ struct FrameRequest {
     unsigned int renderWidth;
     unsigned int renderHeight;
     unsigned int iterations;
+    bool fullReference{true};   // false for low-res previews (central-point cache, no search)
 };
 
 } // namespace engine::dto

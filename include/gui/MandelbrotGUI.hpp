@@ -157,7 +157,8 @@ private:
         const unsigned iters = fullRes ? sidebar_.settings.activeRefiningIters
                                        : sidebar_.settings.panningIters;
         // try_push aborts whatever is in flight (newest wins); backpressure via false.
-        if (engine_.requestFrame({ cam_, rw, rh, iters })) {
+        // Full-res settles build the full reference; low-res previews use the central point.
+        if (engine_.requestFrame({ cam_, rw, rh, iters, fullRes })) {
             inFlight_      = true;
             inFlightScale_ = renderScale_;
             needsUpdate_   = false;
@@ -270,7 +271,9 @@ private:
 
     void drawUI() {
         const bool refining = inFlight_ && inFlightScale_ == 1.0f;
-        const bool reset = legend_.Draw(width_, uiScale_, cam_.currentZoom(), refining, redAlertTimer_);
+        std::optional<unsigned int> refinementPercentage = std::nullopt;
+        if(refining) refinementPercentage = engine_.latestJobStatus();
+        const bool reset = legend_.Draw(width_, uiScale_, cam_.currentZoom(), refinementPercentage, redAlertTimer_);
         const auto s = sidebar_.Draw(uiScale_);
 
         if (reset)                   { cam_.reset(); historyStack_.clear(); needsUpdate_ = true; }

@@ -49,7 +49,7 @@ bool MandelbrotEngine::dispatch(const dto::FrameRequest& req) {
     std::complex<double> pixelStep  = {mathWidth / req.renderWidth, mathHeight / req.renderHeight};
     unsigned int iterations = req.iterations;
 
-    job::RenderJob::JobSpecs specs(reference,pixelStep,req.renderWidth,req.renderHeight,req.iterations,chunks,zoom< ZOOM_ETA_DOUBLE_THRESH);
+    job::RenderJob::JobSpecs specs(reference,pixelStep,req.renderWidth,req.renderHeight,req.iterations,chunks,zoom< ZOOM_ETA_DOUBLE_THRESH, req.fullReference);
 
     bool done = false;
     switch(strat) {

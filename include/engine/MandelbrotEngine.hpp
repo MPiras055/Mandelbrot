@@ -58,11 +58,21 @@ public:
     /// Perturbation reference rebuilds so far (telemetry; one per rendered PTB frame).
     uint64_t ptbRebuildCount() const { return ptbEngine.rebuildCount(); }
 
+    /**
+     * @brief: returns the current job percentage
+     * 
+     * @note: only significative if the job is being process, doesn't account 
+     * for aborted jobs
+     */
+    unsigned int latestJobStatus() const noexcept {
+        return jobStack.get_latest_job().percentageStatus();
+    }
+
 private:
     enum class JobStrategy { ETA, PERTURBATION };
 
     static constexpr double ZOOM_ETA_DOUBLE_THRESH = 1e4;
-    static constexpr double ZOOM_PTB_THRESH = 1e11;
+    static constexpr double ZOOM_PTB_THRESH = 1e13;
     static constexpr size_t JOBSTACK_S_DEF = 60;
 
 
@@ -77,14 +87,12 @@ private:
 
     util::Gradient global_gradient_{
         .stops = {
-            { 0.00f, core::Pixel{ 5, 5, 15, 255 } },       // Abyssal Navy
-            { 0.14f, core::Pixel{ 0, 190, 255, 255 } },    // Electric Cyan
-            { 0.28f, core::Pixel{ 255, 255, 255, 255 } },  // Peak 1: Pure White (Contour Bounce)
-            { 0.42f, core::Pixel{ 235, 45, 10, 255 } },    // Magma Red
-            { 0.57f, core::Pixel{ 255, 215, 0, 255 } },    // Solar Gold
-            { 0.71f, core::Pixel{ 15, 5, 20, 255 } },      // Peak 2: Obsidian Black (Contour Bounce)
-            { 0.85f, core::Pixel{ 180, 0, 235, 255 } },    // Neon Violet
-            { 1.00f, core::Pixel{ 110, 255, 50, 255 } }    // Radioactive Lime
+            { 0.00f, core::Pixel{ 0, 2, 10, 255 } },       // The Abyss (Near Black)
+            { 0.16f, core::Pixel{ 32, 107, 203, 255 } },   // Mid-tone Blue Ridge
+            { 0.42f, core::Pixel{ 237, 255, 255, 255 } },  // Intense Icy Highlight
+            { 0.64f, core::Pixel{ 255, 170, 0, 255 } },    // Warm Orange Slope
+            { 0.85f, core::Pixel{ 10, 5, 0, 255 } },       // Deep Brown/Black Crevasse
+            { 1.00f, core::Pixel{ 0, 2, 10, 255 } }        // Loop back to Abyss
         },
         .smooth_shading = true,
         .root_scaling = true

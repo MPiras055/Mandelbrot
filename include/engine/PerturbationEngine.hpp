@@ -27,10 +27,13 @@ using ComplexDouble = core::ComplexDouble;
 class PerturbationEngine {
     static constexpr unsigned int TILE_SIZE = core::CHUNK_BLOCK;
     //initialize matrix dimensions
-    using RebaseMatrix = RebaseMatrix__<9>;
+    using RebaseMatrix = RebaseMatrix__<64>;      // wide grid for the parallel high-res search
+    using RebaseMatrixLow = RebaseMatrix__<12>;    // small grid for the solo low-res probe (64 cells)
     static constexpr unsigned int MAX_WORKERS = 128;
     static constexpr double REBASE_SHRINK_FACTOR = 0.25;
-    static constexpr unsigned int REBASE_ITERATION = 100;
+    // The low-res probe only needs to RANK cells by depth, so cap its per-cell iterations
+    // well below the render budget (the reference orbit itself is still built to full depth).
+    static constexpr unsigned int LOW_RES_PROBE_CAP = 256;
     core::Pixel*& back_buf_ref;
     std::array<RebaseMatrix*,MAX_WORKERS> workerLocalPtr;
     std::atomic<uint32_t> nextWorkerLocal{0};
@@ -57,10 +60,19 @@ class PerturbationEngine {
      * series approximation of the Mandelbrot function
      */
     struct OrbitRecord {
-        ComplexDouble center;
-        ComplexDouble A;    //first  order derivative
-        ComplexDouble B;    //second order derivative
-        ComplexDouble C;    //third  order derivative
+        ComplexDouble center;   // Z_i of the reference orbit (double)
+    };
+
+    /**
+     * @brief One bilinear-approximation step (Zhuoran BLA): maps the perturbation delta
+     * across a run of 2^level iterations as  δ' = A·δ + B·dc,  valid while |δ|² < r2.
+     * A and B are complex (stored as component pairs to avoid std::complex overhead in
+     * the hot render walk).
+     */
+    struct BLA {
+        double Ar, Ai;   // A (complex)
+        double Br, Bi;   // B (complex)
+        double r2;       // squared validity radius
     };
 
     /**
@@ -73,8 +85,11 @@ class PerturbationEngine {
      * rebuilt into again — same ping-pong argument as DoubleCanvas).
      */
     struct ReferenceCache {
-        util::LazyVector<OrbitRecord> orbit;   // Z_i + A,B,C at the reference point
-        std::vector<double> thresholdEnvelope;
+        util::LazyVector<OrbitRecord> orbit;   // Z_i at the reference point
+        // BLA merge tree: blaLevels[l][j] covers iterations [j·2^l, (j+1)·2^l).
+        std::vector<std::vector<BLA>> blaLevels;
+        double dc_max{0.0};                    // max |pixel − reference| over the view (radii scale)
+        size_t orbitLen{0};                    // == orbit.size(), cached for the render walk
         std::complex<core::BigFloat> reference;     // absolute reference (center + probe delta)
         unsigned int iterations{0};            // orbit depth this cache was built to
         bool valid{false};
@@ -83,128 +98,128 @@ class PerturbationEngine {
         /// escaped). Polls @p job so a long BigFloat build aborts promptly when the
         /// frame is superseded; on abort it returns early with the cache left invalid
         /// (the caller checks and does not publish it).
-        size_t build(const job::RenderJob& job, std::complex<core::BigFloat> ref, size_t max_iterations) {
+        size_t build(const job::RenderJob& job, std::complex<core::BigFloat> ref,
+                     size_t max_iterations, double dc_max_in) {
             this->iterations = max_iterations;
+            this->dc_max = dc_max_in;
             reference = ref;
             
             // orbit: reset size to 0 (keeps capacity); records are appended with
             // push_back below so orbit.size() reflects the true orbit length.
             orbit.init(max_iterations);
-            // thresholdEnvelope: size it up front (resize, not reserve) so the
-            // per-iteration writes below are in-bounds and the prefix-min scan sees
-            // a real size().
-            thresholdEnvelope.assign(max_iterations, 0.0);
-    
-            // Standard BigFloat Z tracking for the absolute reference orbit
+
+            // Standard BigFloat Z tracking for the absolute reference orbit.
             core::BigFloat z_r = 0.0;
             core::BigFloat z_i = 0.0;
-    
-            // BLA Coefficients (starting at 0)
-            ComplexDouble A{0.0, 0.0};
-            ComplexDouble B{0.0, 0.0};
-            ComplexDouble C{0.0, 0.0};
-            ComplexDouble D{0.0, 0.0}; // The 4th derivative used for the threshold
-    
+
             size_t actual_length = 0;
-    
+
             for (size_t i = 0; i < max_iterations; i++) {
                 // Poll abort off the hot path so a superseded frame drops its build fast.
                 if ((i & 0xFF) == 0 && job.aborted()) return actual_length;
 
-                // 1. Store current state (cast center to double for the fast per-pixel loop)
-                double current_z_r = static_cast<double>(z_r);
-                double current_z_i = static_cast<double>(z_i);
-                
-                // Append the record (advances orbit.size()); reusing capacity from
-                // the init() above keeps this allocation-free across rebuilds.
+                // Store Z_i (cast to double for the fast per-pixel loop + BLA table).
                 orbit.push_back(OrbitRecord{
-                    ComplexDouble{current_z_r, current_z_i}, A, B, C});
-    
-                // 2. Threshold from the 4th derivative (D). Stored SQUARED (the squared
-                // valid-skip radius) so the render binary search compares squared
-                // magnitudes and avoids a per-pixel sqrt: |delta|_valid is proportional
-                // to |D|^(-1/4), so its square is |D|^(-1/2) = 1/sqrt(|D|).
-                double abs_D = std::sqrt(D.real() * D.real() + D.imag() * D.imag());
-                if (abs_D > 0.0) {
-                    thresholdEnvelope[i] = 1.0 / std::sqrt(abs_D);
-                } else {
-                    // At iteration 0, error is 0, so valid radius is theoretically infinite
-                    thresholdEnvelope[i] = std::numeric_limits<double>::max(); 
-                }
-    
-                // 3. Calculate next BLA coefficients using double precision
-                ComplexDouble Z_n{current_z_r, current_z_i};
-                ComplexDouble two_Z_n = Z_n * 2.0;
-    
-                ComplexDouble next_D = (two_Z_n * D) + (A * C * 2.0) + (B * B);
-                ComplexDouble next_C = (two_Z_n * C) + (A * B * 2.0);
-                ComplexDouble next_B = (two_Z_n * B) + (A * A);
-                ComplexDouble next_A = (two_Z_n * A) + ComplexDouble{1.0, 0.0};
-    
-                A = next_A;
-                B = next_B;
-                C = next_C;
-                D = next_D;
-    
-                // 4. Step the actual reference orbit forward using BigFloat
+                    ComplexDouble{ static_cast<double>(z_r), static_cast<double>(z_i) }});
+
+                // Step the reference orbit forward in BigFloat.
                 core::BigFloat next_z_r = z_r * z_r - z_i * z_i + reference.real();
                 core::BigFloat next_z_i = core::BigFloat(2.0) * z_r * z_i + reference.imag();
-                
+
                 z_r = next_z_r;
                 z_i = next_z_i;
                 actual_length++;
-    
-                // If the reference orbit escapes, we stop building early
+
+                // If the reference orbit escapes, stop building early.
                 if (static_cast<double>(z_r * z_r + z_i * z_i) > 4.0) {
                     break;
                 }
             }
-    
-            // orbit already holds exactly `actual_length` records (via push_back);
-            // trim the threshold envelope to match if the reference orbit escaped
-            // before max_iterations.
-            if (actual_length < max_iterations) {
-                thresholdEnvelope.resize(actual_length);
-            }
-    
-            // 5. Scan the threshold envelope to record the prefix minimum.
-            // This ensures the skip radius is monotonically non-increasing, which is 
-            // strictly required for the binary search in your rendering loop to work.
-            if (!thresholdEnvelope.empty()) {
-                double current_min = thresholdEnvelope[0];
-                for (size_t i = 1; i < thresholdEnvelope.size(); i++) {
-                    if (thresholdEnvelope[i] < current_min) {
-                        current_min = thresholdEnvelope[i];
-                    } else {
-                        thresholdEnvelope[i] = current_min;
-                    }
-                }
-            }
-    
+
+            // ---- Build the BLA merge tree from the stored reference orbit (Zhuoran) ----
+            buildBLA(actual_length);
+
             this->valid = true;
             return actual_length;
         }
-    };
-    ReferenceCache cacheSlots_[2];
-    std::atomic<ReferenceCache*> activeCache_{nullptr};   // nullptr => must rebuild
-    std::atomic<uint64_t> rebuilds_{0};                   // reference rebuilds (telemetry)
-    
-    /**
-     * @brief Validate one render tile against a cached reference (Phase 1).
-     * @details Samples 1 pixel in 16 and runs the perturbation loop; returns true if
-     * any sample glitches — the Pauldelbrot criterion |Z_ref+δ|² < |δ|²·ε (the full
-     * point collapses relative to the perturbation => catastrophic cancellation =>
-     * the reference is inadequate here) or a NaN. A glitch forces a rebuild.
-     */
-    bool validateTile(const job::RenderJob& job, const job::RenderJob::JobSpecs& specs, size_t chunkId);
 
-    bool rebaseChunk(const job::RenderJob& job, size_t chunk_idx);
+        /**
+         * @brief Build the bilinear-approximation merge tree from the (already-built)
+         * reference orbit `orbit[0..L)`. Level 0 has one BLA per iteration; each higher
+         * level merges adjacent pairs, doubling the skip length, with validity radii
+         * shrunk by the standard Zhuoran merge rule (using `dc_max`). All double math.
+         */
+        void buildBLA(size_t L) {
+            // tol trades skip aggressiveness vs approximation error (visible glitches).
+            constexpr double BLA_TOL = 1.0 / static_cast<double>(1u << 24);
+            blaLevels.clear();
+            orbitLen = L;
+            if (L == 0) return;
+
+            // Level 0: δ_{i+1} ≈ 2·Z_i·δ_i + dc  →  A = 2 Z_i, B = 1, r = tol·|2 Z_i|.
+            std::vector<BLA> level;
+            level.reserve(L);
+            for (size_t i = 0; i < L; ++i) {
+                const double Ar = 2.0 * orbit[i].center.real();
+                const double Ai = 2.0 * orbit[i].center.imag();
+                const double r  = BLA_TOL * std::sqrt(Ar * Ar + Ai * Ai);
+                level.push_back(BLA{Ar, Ai, 1.0, 0.0, r * r});
+            }
+            blaLevels.push_back(std::move(level));
+
+            // Merge upward while a full pair of children exists.
+            while (blaLevels.back().size() >= 2) {
+                const std::vector<BLA>& prev = blaLevels.back();
+                const size_t cnt = prev.size() / 2;
+                std::vector<BLA> merged;
+                merged.reserve(cnt);
+                for (size_t j = 0; j < cnt; ++j) {
+                    const BLA& x = prev[2 * j];       // earlier run [n, n+m)
+                    const BLA& y = prev[2 * j + 1];   // later run   [n+m, n+2m)
+                    // A = Ay·Ax ; B = Ay·Bx + By   (complex)
+                    const double Ar = y.Ar * x.Ar - y.Ai * x.Ai;
+                    const double Ai = y.Ar * x.Ai + y.Ai * x.Ar;
+                    const double Br = (y.Ar * x.Br - y.Ai * x.Bi) + y.Br;
+                    const double Bi = (y.Ar * x.Bi + y.Ai * x.Br) + y.Bi;
+                    // r = min(rx, max(0, (ry − |Bx|·dc_max) / |Ax|))
+                    const double rx    = std::sqrt(x.r2);
+                    const double ry    = std::sqrt(y.r2);
+                    const double absBx = std::sqrt(x.Br * x.Br + x.Bi * x.Bi);
+                    const double absAx = std::sqrt(x.Ar * x.Ar + x.Ai * x.Ai);
+                    const double r2nd  = (absAx > 0.0) ? std::max(0.0, (ry - absBx * dc_max) / absAx) : 0.0;
+                    const double r     = std::min(rx, r2nd);
+                    merged.push_back(BLA{Ar, Ai, Br, Bi, r * r});
+                }
+                blaLevels.push_back(std::move(merged));
+            }
+        }
+    };
+    std::atomic<uint64_t> rebuilds_{0};                   // reference rebuilds (telemetry)
+
+    // Per-worker reference-cache pool: the frame's leader builds the reference into its
+    // OWN cache and publishes the pointer in the job; followers render against it. No
+    // global cache. (Lifetime vs a straggler reusing this while another job reads it is
+    // intentionally ignored for now — hazard pointers / pooling later.)
+    std::array<ReferenceCache*, MAX_WORKERS> workerLocalCache_{};
+    std::atomic<uint32_t> nextWorkerLocalCache_{0};
+
+    ReferenceCache* getLocalCache() {
+        static thread_local ReferenceCache* ptr = [this]() {
+            const size_t my_idx = nextWorkerLocalCache_.fetch_add(1ul, std::memory_order_relaxed);
+            assert(my_idx < MAX_WORKERS && "Exceeded MAX_WORKERS cache allocation limits!");
+            ReferenceCache* allocated = new ReferenceCache();
+            workerLocalCache_[my_idx] = allocated;
+            return allocated;
+        }();
+        return ptr;
+    }
 
     const util::Gradient& gradient;
 
     void processChunkScalar(
         const job::RenderJob& job_ref,
         const job::RenderJob::JobSpecs& specs,
+        const ReferenceCache* __restrict__ cache,
         const size_t chunk_idx);
 
 public:

@@ -84,7 +84,6 @@ void EscapeTimeEngine::processChunkSIMD(const job::RenderJob::ETAJob& job_ref,
             IntF curr_iter = 0;
 
             while (curr_iter < iterMaxCast) {
-                if ((curr_iter & 63) == 0 && job_ref.aborted()) return;
                 for (int k = 0; k < 8 && curr_iter < iterMaxCast; ++k, ++curr_iter) {
 
                     y = (2.0f * x * y) + c_imag;
@@ -114,6 +113,7 @@ void EscapeTimeEngine::processChunkSIMD(const job::RenderJob::ETAJob& job_ref,
             const int valid_lanes = std::min(V_WIDTH, end_x - px);
 
             for (int i = 0; i < valid_lanes; ++i) {
+                if (job_ref.aborted()) return;
                 row_ptr[px + i] = util::ColorUtil::Compute(
                     static_cast<unsigned int>(iters[i]), max_iteration, static_cast<float>(final_r2[i]), gradient
                 );

@@ -32,6 +32,7 @@ namespace engine::job {
             unsigned int iterations{0};
             unsigned int chunks{0};
             bool useFloat{false};
+            bool fullReference{true};   // true => full neighbourhood search; false => central-point cache (low-res)
 
             JobSpecs(std::complex<BigFloat> reference,
                 std::complex<double> pixelStep,
@@ -39,12 +40,14 @@ namespace engine::job {
                 unsigned int height,
                 unsigned int iterations,
                 unsigned int chunks,
-                bool useFloat = false
+                bool useFloat = false,
+                bool fullReference = true
                 ) :
                 reference{reference},
                 pixelStep{pixelStep},
                 width{width},height{height},
-                iterations{iterations},chunks{chunks},useFloat{useFloat} {}
+                iterations{iterations},chunks{chunks},useFloat{useFloat},
+                fullReference{fullReference} {}
 
             JobSpecs() :
                     reference(BigFloat(0.0), BigFloat(0.0)), // Explicitly cast to BigFloat
@@ -53,7 +56,8 @@ namespace engine::job {
                     height(0),
                     iterations(0),
                     chunks(0),
-                    useFloat(false) {}
+                    useFloat(false),
+                    fullReference(true) {}
         };
 
         using ETAJob = EscapeTimeJob;
@@ -195,6 +199,19 @@ namespace engine::job {
          */
         template<typename T> inline constexpr bool holds() const noexcept { return std::holds_alternative<T>(jobState); }
 
+        
+        /**
+         * @brief: returns the percentage completion of a job
+         * @returns: a unsigned integer 0 - 100 which tells how many chunks have 
+         * been processed
+         */
+        inline unsigned int percentageStatus() const noexcept {
+            return std::visit([this](auto& job) noexcept -> bool {
+                return job.percentageStatus(specs.chunks);
+            },jobState);
+        }
+
+        
         private:
         static constexpr uint64_t SEAL_BIT = 1ull << 63;
         friend RenderJobStack;
@@ -257,6 +274,8 @@ namespace engine::job {
         inline bool safeToRecycle() const noexcept {
             return refCount.zero();
         }
+
+
     };
 
 } // namespace engine::job

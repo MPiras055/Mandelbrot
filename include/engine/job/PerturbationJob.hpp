@@ -66,31 +66,29 @@ struct PerturbationJob {
     char pad1__[CACHE_LINE_SIZE - sizeof(std::atomic<uint64_t>) * 3];
     std::atomic<void*> rebaseMatrix{nullptr}; //no need for padding only setted one time
 
-    // Center-first election: one worker builds the screen-center reference and decides
-    // whether the grid search is even needed. Followers park on this until the winner
-    // publishes. Set once per job; contended only briefly at rebuild start.
-    static constexpr int CENTER_UNDECIDED = 0;
-    static constexpr int CENTER_GOOD      = 1;   // center reached max_iter — use it, skip search
-    static constexpr int CENTER_SEARCH    = 2;   // center too shallow — run the grid search
-    static constexpr int CENTER_ABORT     = -1;  // job aborted while deciding
-    std::atomic<int> centerState{CENTER_UNDECIDED};
+    // Reference-cache publication: the frame's leader builds the reference into its own
+    // worker-local ReferenceCache and publishes the POINTER here; followers park until
+    // it's non-null, then render against it. `nullptr` = not yet published;
+    // CACHE_ABORT = the job aborted before a cache was published.
+    inline static void* const CACHE_ABORT = reinterpret_cast<void*>(static_cast<std::uintptr_t>(-1));
+    std::atomic<void*> refCache{nullptr};
 
-    /// Winner: publish the center-first decision (GOOD/SEARCH). Loses to a concurrent
-    /// abort. @return false if the job was aborted before publishing.
-    bool publishCenterDecision(int decision) noexcept {
-        int expected = CENTER_UNDECIDED;
-        const bool won = centerState.compare_exchange_strong(expected, decision, std::memory_order_release);
-        centerState.notify_all();
-        return won;   // false => expected == CENTER_ABORT
+    /// Leader: publish the reference-cache pointer. CAS nullptr→cache; loses to abort.
+    /// @return false if the job was aborted before publishing.
+    bool publishCache(void* cache) noexcept {
+        void* expected = nullptr;
+        const bool won = refCache.compare_exchange_strong(expected, cache, std::memory_order_release);
+        refCache.notify_all();
+        return won;   // false => expected == CACHE_ABORT
     }
 
-    /// Follower: block until the winner decides (or the job aborts).
-    /// @return CENTER_GOOD / CENTER_SEARCH, or CENTER_ABORT.
-    int waitCenterDecision() noexcept {
-        int s = centerState.load(std::memory_order_acquire);
-        while (s == CENTER_UNDECIDED) {
-            centerState.wait(CENTER_UNDECIDED, std::memory_order_acquire);
-            s = centerState.load(std::memory_order_acquire);
+    /// Follower: block until the leader publishes the cache (or the job aborts).
+    /// @return the published ReferenceCache* (as void*), or CACHE_ABORT.
+    void* waitCache() noexcept {
+        void* s = refCache.load(std::memory_order_acquire);
+        while (s == nullptr) {
+            refCache.wait(nullptr, std::memory_order_acquire);
+            s = refCache.load(std::memory_order_acquire);
         }
         return s;
     }
@@ -227,6 +225,18 @@ struct PerturbationJob {
         return (s & ABORT_FLAG) == 0;
     }
 
+    /**
+     * @brief: get the completion percentage of the current job
+     * 
+     * @returns: a number from 0 to 100 of the chunks processed in respect of the 
+     * total chunks of the job
+     * @note: doesn't check if the job has been aborted
+     */
+    unsigned int percentageStatus(size_t total_chunks) const noexcept {
+        //proc : total_chunks = x : 100
+        return (renderDone.load(std::memory_order_relaxed) & (~ABORT_FLAG) * 100) / total_chunks;  
+    }
+    
     // =========================================================================
     // LEGACY ADAPTERS (transitional — remove once the engine uses the phase API)
     //   probe  -> validation pair   |   chunk -> render pair
@@ -242,9 +252,9 @@ struct PerturbationJob {
      */
     void reset(size_t render_total) noexcept {
         assert((render_total & ABORT_FLAG) == 0 && "render_total too high");
-        //reset the rebaseMatrix + center-first election
+        //reset the rebaseMatrix + published reference-cache pointer
         rebaseMatrix.store(nullptr,std::memory_order_relaxed);
-        centerState.store(CENTER_UNDECIDED, std::memory_order_relaxed);
+        refCache.store(nullptr, std::memory_order_relaxed);
         //reset all the counters
         valIdx.store(       0, std::memory_order_relaxed);
         rebaseIdx.store(    0, std::memory_order_relaxed);
@@ -271,9 +281,9 @@ struct PerturbationJob {
         rebaseIdx.notify_all();   // followers now park on rebaseIdx, not rebaseDone
         rebaseDone.fetch_or(ABORT_FLAG, std::memory_order_acq_rel);
         rebaseDone.notify_all();
-        // wake anyone parked on the center-first decision
-        centerState.store(CENTER_ABORT, std::memory_order_release);
-        centerState.notify_all();
+        // wake anyone parked waiting for the reference-cache publication
+        refCache.store(CACHE_ABORT, std::memory_order_release);
+        refCache.notify_all();
 
         if ((last & STD_MASK) < render_total) {
             const uint64_t unclaimed = render_total - (last & STD_MASK);

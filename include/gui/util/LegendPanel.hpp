@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include "UITheme.hpp"
+#include <optional>
 #include "../../engine/MandelbrotEngine.hpp"
 
 namespace gui::util {
@@ -13,7 +14,7 @@ namespace gui::util {
     public:
         bool isOpen{true};
 
-        bool Draw(int screenW, float scale, double zoom, bool isRefining, float redTimer) {
+        bool Draw(int screenW, float scale, double zoom, std::optional<unsigned int> refinementPercentage, float redTimer) {
             if (IsKeyPressed(KEY_L)) isOpen = !isOpen;
             if (!isOpen) return false;
 
@@ -38,7 +39,10 @@ namespace gui::util {
             ty += static_cast<int>(22 * scale);
             const char* sTxt = "Status: Ready"; Color sCol = GREEN;
             if (redTimer > 0.0f) { sTxt = "Status: No History!"; sCol = RED; }
-            else if (isRefining) { sTxt = "Status: Refining..."; sCol = YELLOW; }
+            else if (refinementPercentage) {
+                sTxt = TextFormat("Refining... %u",refinementPercentage.value());
+                sCol = YELLOW; 
+            }
             DrawText(sTxt, static_cast<int>(x + 10*scale), ty, fs, sCol);
 
             // Reset Button

@@ -36,6 +36,18 @@ struct EscapeTimeJob {
     }
 
     /**
+     * @brief: get the completion percentage of the current job
+     * 
+     * @returns: a number from 0 to 100 of the chunks processed in respect of the 
+     * total chunks of the job
+     * @note: doesn't check if the job has been aborted
+     */
+    unsigned int percentageStatus(size_t total_chunks) const noexcept {
+        //proc : total_chunks = x : 100
+        return (done_chunk.load(std::memory_order_relaxed) & (~MSB_MASK) * 100) / total_chunks;  
+    }
+
+    /**
      * @brief: checks if the current job was registered as aborted
      * 
      * @note: a job is registered as aborted by an abort call on an uncompleted job
