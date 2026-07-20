@@ -254,33 +254,38 @@ void PerturbationEngine::processPerturbationJob(job::RenderJob& job) {
 
     // ---- Phase 1: build the reference, publish the pointer ----
     if (!specs.fullReference) {
-        // LOW-RES: one elected builder does a SINGLE coarse probe pass (no shrink loop) —
-        // sample the 9x9 around the centre once and recenter on the deepest cell, so the
-        // reference is ~as deep as the best of 81 samples (the raw centre is usually too
-        // shallow and buries the render in per-pixel BigFloat fallbacks).
-        void* expected = nullptr;
-        const bool builder = jobState.rebaseMatrix.compare_exchange_strong(
-            expected, reinterpret_cast<void*>(1), std::memory_order_acq_rel);
-        if (builder) {
-            // Solo single coarse pass over a SMALL grid with a capped iteration count —
-            // this only ranks cells to pick a deep centre; the reference orbit is still
-            // built to the full budget below. Stack-local (no pool: one builder, transient).
-            RebaseMatrixLow m;
-            std::complex<double> start_step{
-                specs.pixelStep.real() * (specs.width / 4.0) / RebaseMatrixLow::DIMENSION,
-                specs.pixelStep.imag() * (specs.height / 4.0) / RebaseMatrixLow::DIMENSION
-            };
-            m.init(specs.reference, start_step);
-            const unsigned int probe_cap = std::min(specs.iterations, LOW_RES_PROBE_CAP);
-            for (int cell = 0; cell < RebaseMatrixLow::REBASE_MTX_CHUNKS; ++cell) {
-                if (job.aborted()) break;
-                m.computeAndStoreAt(cell, probe_cap);
-            }
-            m.shrinkAndCenter(0.25);   // recenter on the max-depth cell (one pass)
+        // LOW-RES: a SINGLE cooperative probe pass over a SMALL grid (all idle workers
+        // help), capped iterations (ranking only). The last reporter recenters on the
+        // deepest cell, builds the reference to full depth, and publishes it.
+        RebaseMatrixLow* localMatrixPtr = getLocalMatrixLow();
+        std::complex<double> start_step{
+            specs.pixelStep.real() * (specs.width / 4.0) / RebaseMatrixLow::DIMENSION,
+            specs.pixelStep.imag() * (specs.height / 4.0) / RebaseMatrixLow::DIMENSION
+        };
+        localMatrixPtr->init(specs.reference, start_step);
+
+        void* sharedPtr = nullptr;
+        if (!jobState.rebaseMatrix.compare_exchange_strong(sharedPtr, localMatrixPtr))
+            localMatrixPtr = static_cast<RebaseMatrixLow*>(sharedPtr);
+        RebaseMatrixLow& sm = *localMatrixPtr;
+
+        const unsigned int probe_cap = std::min(specs.iterations, LOW_RES_PROBE_CAP);
+
+        size_t cell;
+        uint32_t iteration;
+        bool leader = false;
+        while (jobState.claimRebase(RebaseMatrixLow::REBASE_MTX_CHUNKS, iteration, cell)) {
+            sm.computeAndStoreAt(cell, probe_cap);
+            leader = jobState.reportRebase(RebaseMatrixLow::REBASE_MTX_CHUNKS);
+        }
+        if (job.aborted()) return;
+        if (leader) {
+            sm.shrinkAndCenter(0.25);   // recenter on the deepest cell (single pass)
             ReferenceCache* local = getLocalCache();
-            local->build(job, m.center, specs.iterations, computeDcMax(m.center));
+            local->build(job, sm.center, specs.iterations, computeDcMax(sm.center));
             publishBuilt(local);
         }
+        // non-leaders fall through to waitCache below
     } else {
         // HIGH-RES: cooperative neighbourhood search; the terminal leader builds + publishes.
         RebaseMatrix* localMatrixPtr = getLocalMatrix();

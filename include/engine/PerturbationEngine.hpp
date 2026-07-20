@@ -50,6 +50,22 @@ class PerturbationEngine {
         return ptr;
     }
 
+    // Per-worker pool for the small low-res probe grid (shared cooperatively via the
+    // job's rebaseMatrix CAS, like getLocalMatrix()).
+    std::array<RebaseMatrixLow*,MAX_WORKERS> workerLocalPtrLow;
+    std::atomic<uint32_t> nextWorkerLocalLow{0};
+
+    RebaseMatrixLow* getLocalMatrixLow() {
+        static thread_local RebaseMatrixLow* ptr = [this]() {
+            const size_t my_idx = nextWorkerLocalLow.fetch_add(1ul, std::memory_order_relaxed);
+            assert(my_idx < MAX_WORKERS && "Exceeded MAX_WORKERS allocation limits!");
+            RebaseMatrixLow* allocated = new RebaseMatrixLow();
+            workerLocalPtrLow[my_idx] = allocated;
+            return allocated;
+        }();
+        return ptr;
+    }
+
     
     
 
