@@ -44,7 +44,7 @@ struct EscapeTimeJob {
      */
     unsigned int percentageStatus(size_t total_chunks) const noexcept {
         //proc : total_chunks = x : 100
-        return (done_chunk.load(std::memory_order_relaxed) & (~MSB_MASK) * 100) / total_chunks;  
+        return ((done_chunk.load(std::memory_order_relaxed) & ~MSB_MASK) * 100) / total_chunks;
     }
 
     /**

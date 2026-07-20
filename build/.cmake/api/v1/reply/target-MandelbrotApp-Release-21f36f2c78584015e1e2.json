@@ -303,7 +303,8 @@
 				32,
 				33,
 				34,
-				35
+				35,
+				36
 			]
 		}
 	],
@@ -463,6 +464,11 @@
 		{
 			"backtrace" : 1,
 			"path" : "include/gui/MandelbrotGUI.hpp",
+			"sourceGroupIndex" : 1
+		},
+		{
+			"backtrace" : 1,
+			"path" : "include/gui/Palettes.hpp",
 			"sourceGroupIndex" : 1
 		},
 		{

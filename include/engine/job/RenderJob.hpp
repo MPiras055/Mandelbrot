@@ -206,7 +206,7 @@ namespace engine::job {
          * been processed
          */
         inline unsigned int percentageStatus() const noexcept {
-            return std::visit([this](auto& job) noexcept -> bool {
+            return std::visit([this](auto& job) noexcept -> unsigned int {
                 return job.percentageStatus(specs.chunks);
             },jobState);
         }

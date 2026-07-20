@@ -40,7 +40,7 @@ namespace gui::util {
             const char* sTxt = "Status: Ready"; Color sCol = GREEN;
             if (redTimer > 0.0f) { sTxt = "Status: No History!"; sCol = RED; }
             else if (refinementPercentage) {
-                sTxt = TextFormat("Refining... %u",refinementPercentage.value());
+                sTxt = TextFormat("Refining... %u %%",refinementPercentage.value());
                 sCol = YELLOW; 
             }
             DrawText(sTxt, static_cast<int>(x + 10*scale), ty, fs, sCol);

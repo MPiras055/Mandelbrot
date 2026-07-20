@@ -4399,6 +4399,7 @@ CMakeFiles/MandelbrotApp.dir/src/main.cpp.o: /home/matti/Projects/mandelbrot/src
   /home/matti/Projects/mandelbrot/include/gui/MandelbrotGUI.hpp \
   /home/matti/Projects/mandelbrot/include/gui/Presenter.hpp \
   /home/matti/Projects/mandelbrot/include/gui/RenderSettings.hpp \
+  /home/matti/Projects/mandelbrot/include/gui/Palettes.hpp \
   /home/matti/Projects/mandelbrot/include/gui/util/LegendPanel.hpp \
   /home/matti/Projects/mandelbrot/include/gui/util/SettingsSidebar.hpp \
   /home/matti/Projects/mandelbrot/include/gui/util/UITheme.hpp \
@@ -5427,6 +5428,8 @@ CMakeFiles/MandelbrotApp.dir/src/engine/EscapeTimeEngine.cpp.o:
 
 /usr/lib64/libc.so:
 
+/usr/lib64/crt1.o:
+
 /usr/include/boost/preprocessor/logical/and.hpp:
 
 /usr/include/bits/local_lim.h:
@@ -5444,8 +5447,6 @@ CMakeFiles/MandelbrotApp.dir/src/engine/EscapeTimeEngine.cpp.o:
 /usr/include/boost/preprocessor/seq/enum.hpp:
 
 /usr/include/c++/15/bits/ostream.h:
-
-/usr/include/c++/15/bits/stl_raw_storage_iter.h:
 
 /usr/include/boost/preprocessor/facilities/detail/is_empty.hpp:
 
@@ -6156,6 +6157,10 @@ CMakeFiles/MandelbrotApp.dir/src/engine/MandelbrotEngine.cpp.o:
 /usr/include/c++/15/bits/chrono.h:
 
 /usr/include/c++/15/bits/uses_allocator_args.h:
+
+/usr/include/c++/15/bits/stl_raw_storage_iter.h:
+
+/home/matti/Projects/mandelbrot/include/gui/Palettes.hpp:
 
 /usr/include/boost/preprocessor/cat.hpp:
 
@@ -7678,5 +7683,3 @@ deps/raylib/raylib/libraylib.a:
 /home/matti/Projects/mandelbrot/include/gui/MandelbrotGUI.hpp:
 
 /home/matti/Projects/mandelbrot/include/gui/util/LegendPanel.hpp:
-
-/usr/lib64/crt1.o:

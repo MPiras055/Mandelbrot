@@ -940,4 +940,5 @@ CMakeFiles/MandelbrotApp.dir/src/main.cpp.o: \
  /home/matti/Projects/mandelbrot/include/gui/Presenter.hpp \
  /home/matti/Projects/mandelbrot/include/gui/util/SettingsSidebar.hpp \
  /home/matti/Projects/mandelbrot/include/gui/util/UITheme.hpp \
+ /home/matti/Projects/mandelbrot/include/gui/util/../Palettes.hpp \
  /home/matti/Projects/mandelbrot/include/gui/util/LegendPanel.hpp

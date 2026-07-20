@@ -234,7 +234,7 @@ struct PerturbationJob {
      */
     unsigned int percentageStatus(size_t total_chunks) const noexcept {
         //proc : total_chunks = x : 100
-        return (renderDone.load(std::memory_order_relaxed) & (~ABORT_FLAG) * 100) / total_chunks;  
+        return ((renderDone.load(std::memory_order_relaxed) & STD_MASK) * 100) / total_chunks;
     }
     
     // =========================================================================

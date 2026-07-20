@@ -23,6 +23,12 @@ struct RenderSettings {
     unsigned int activeRefiningIters{2048};
     unsigned int pendingRefiningIters{2048};
     bool disableRefinement{false};
+
+    // When on, editing the Target (refining) iterations also sets the Nav (panning) count.
+    bool matchIters{false};
+
+    // Index into gui::Presets (Palettes.hpp); 0 = engine default ("Glacier").
+    int paletteIndex{0};
 };
 
 } // namespace gui

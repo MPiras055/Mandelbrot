@@ -279,6 +279,7 @@ private:
         if (reset)                   { cam_.reset(); historyStack_.clear(); needsUpdate_ = true; }
         if (s.needsInstantRerender)  { needsUpdate_ = true; }  // Presenter resizes textures on upload
         if (s.applyIterationsClicked){ needsUpdate_ = true; }
+        if (s.paletteChanged)        { engine_.SetPalette(gui::Presets[sidebar_.settings.paletteIndex].gradient); }
 
         if (isBoxSelecting_ && !sidebar_.allowDragging) {
             const float bx = std::min(boxStart_.x, boxEnd_.x), by = std::min(boxStart_.y, boxEnd_.y);
