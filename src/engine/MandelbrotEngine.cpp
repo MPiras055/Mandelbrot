@@ -5,6 +5,8 @@
 #include "engine/job/RenderJobStack.hpp"
 #include <complex>
 #include <cassert>
+#include <chrono>
+#include <thread>
 #include <utility>
 
 namespace engine {
@@ -51,16 +53,10 @@ bool MandelbrotEngine::dispatch(const dto::FrameRequest& req) {
 
     job::RenderJob::JobSpecs specs(reference,pixelStep,req.renderWidth,req.renderHeight,req.iterations,chunks,zoom< ZOOM_ETA_DOUBLE_THRESH, req.fullReference);
 
-    bool done = false;
-    switch(strat) {
-        case JobStrategy::ETA: done = jobStack.try_push<job::RenderJob::ETAJob>(specs);
-        break;
-        case JobStrategy::PERTURBATION: done = jobStack.try_push<job::RenderJob::PTBJob>(specs);
-        break;
-        default:
-            assert(false && "Strategy not wired up");
-    }
-    return done;
+    // JobStrategy has exactly these two enumerators — no default needed.
+    return (strat == JobStrategy::ETA)
+        ? jobStack.try_push<job::RenderJob::ETAJob>(specs)
+        : jobStack.try_push<job::RenderJob::PTBJob>(specs);
 }
 
 void MandelbrotEngine::workerRoutine(size_t /*thread_id*/) {
@@ -75,7 +71,6 @@ void MandelbrotEngine::workerRoutine(size_t /*thread_id*/) {
         }
 
         if(job.acquire(last_version)) {
-            bool wait = false;
             if (job.holds<job::RenderJob::ETAJob>()) {
                 if(job.getSpecs().useFloat)
                     etaEngine.processEscapeTimeJob<float>(job);
@@ -93,15 +88,32 @@ void MandelbrotEngine::workerRoutine(size_t /*thread_id*/) {
     }
 }
 
+/**
+ * @brief Block until the newest job finishes.
+ *
+ * @details Backs off in three stages rather than spinning flat out: a short `pause` spin
+ * keeps latency low for the common quick wait (the constructor, `resizeCanvas`), then
+ * yielding, then a real sleep. A pure spin pinned a whole core for the duration of every
+ * deep render — very visible during a path export, where this is called once per frame.
+ */
 void MandelbrotEngine::waitFrameDone() {
+    unsigned spins = 0;
     while(!jobStack.is_latest_done()) {
-        #if defined(__x86_64__) || defined(_M_X64)
-            __builtin_ia32_pause();
-        #elif defined(__arm__) || defined(__aarch64__)
-            asm volatile("yield" ::: "memory");
-        #else
+        if (spins < 512) {
+            ++spins;
+            #if defined(__x86_64__) || defined(_M_X64)
+                __builtin_ia32_pause();
+            #elif defined(__arm__) || defined(__aarch64__)
+                asm volatile("yield" ::: "memory");
+            #else
+                std::this_thread::yield();
+            #endif
+        } else if (spins < 1024) {
+            ++spins;
             std::this_thread::yield();
-        #endif
+        } else {
+            std::this_thread::sleep_for(std::chrono::microseconds(200));
+        }
     }
 }
 
@@ -130,25 +142,20 @@ void MandelbrotEngine::resizeCanvas(unsigned int width, unsigned int height) {
     stampLastFlipped = jobStack.get_latest_job().getStamp();
 }
 
+/**
+ * @brief Swap the active colour gradient. Does NOT dispatch — the caller requests the
+ * repaint through the normal frame path, so it gets progress reporting and preemption
+ * like any other frame.
+ *
+ * @note The abort + wait are load-bearing, not ceremony: workers hold a
+ * `const util::Gradient&` into `global_gradient_` for the life of a job, so swapping it
+ * while one is in flight is a data race. Aborting first keeps the wait short and bounded.
+ */
 void MandelbrotEngine::SetPalette(util::Gradient new_gradient) {
     jobStack.abort_latest();
-    const auto& lastJob = jobStack.get_latest_job();
-    JobStrategy strat = (lastJob.holds<job::RenderJob::ETAJob>() ? JobStrategy::ETA : JobStrategy::PERTURBATION);
     waitFrameDone();
     global_gradient_ = std::move(new_gradient);
     global_gradient_.prepare();
-    bool dispatched = false;
-    switch(strat) {
-        case JobStrategy::ETA: dispatched = jobStack.try_push<job::RenderJob::ETAJob>(lastJob.getSpecs());
-        break;
-        case JobStrategy::PERTURBATION: dispatched = jobStack.try_push<job::RenderJob::PTBJob>(lastJob.getSpecs());
-        break;
-        default: {
-            assert(false && "Unreachable: (set palette switch)");
-        }
-    }
-
-    assert(dispatched && "SetPalette: new job coudn't be dispatched");
 }
 
 } // namespace engine

@@ -1,10 +1,6 @@
 #include <iostream>
 #include <string>
-#include "boost/multiprecision/fwd.hpp"
-#include "engine/job/PerturbationJob.hpp"
-#include "engine/job/RenderJob.hpp"
 #include "gui/MandelbrotGUI.hpp"
-#include "engine/PerturbationEngine.hpp"
 
 /**
  * @brief Application Entry Point.

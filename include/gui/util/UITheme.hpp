@@ -10,7 +10,6 @@ struct UITheme {
     static constexpr Color TextNormal    { 225, 225, 235, 255 };
     static constexpr Color TextMuted     { 135, 135, 155, 255 };
     static constexpr Color AccentActive  { 0, 190, 255, 255 };
-    static constexpr Color AccentApply   { 110, 255, 50, 255 };
     static constexpr Color ButtonHover   { 52, 52, 74, 255 };
 };
 }

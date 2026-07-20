@@ -31,11 +31,16 @@ public:
     const BigFloat& centerY() const { return offsetY; }
     double currentZoom()      const { return zoom; }
 
-    // --- Accessors: target state, used for UI tracking queries ---
-    double uiOffsetX() const { return static_cast<double>(targetOffsetX); }
-    double uiOffsetY() const { return static_cast<double>(targetOffsetY); }
-
+    /// The TARGET state (not the damped current one) — this is what undo snapshots store.
     Snapshot currentSnapshot() const { return { targetOffsetX, targetOffsetY, targetZoom }; }
+
+    /// True when the target is already the default view, so a reset would be a no-op.
+    /// Lets the GUI skip dispatching a frame identical to the one on screen.
+    bool isAtHome() const {
+        return targetZoom == 1.0
+            && targetOffsetX == BigFloat(-0.5)
+            && targetOffsetY == BigFloat(0.0);
+    }
 
     // --- Navigation (defined in Camera.cpp) ---
     void pan(float mouseDeltaX, float mouseDeltaY, unsigned int screenWidth, unsigned int screenHeight);

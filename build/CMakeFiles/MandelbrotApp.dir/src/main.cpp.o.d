@@ -160,8 +160,43 @@ CMakeFiles/MandelbrotApp.dir/src/main.cpp.o: \
  /usr/include/c++/15/bits/formatfwd.h \
  /usr/include/c++/15/bits/ostream.tcc /usr/include/c++/15/istream \
  /usr/include/c++/15/bits/istream.tcc \
- /home/matti/Projects/mandelbrot/deps/boost/boost/multiprecision/fwd.hpp \
- /home/matti/Projects/mandelbrot/deps/boost/boost/multiprecision/cpp_int/cpp_int_config.hpp \
+ /home/matti/Projects/mandelbrot/include/gui/MandelbrotGUI.hpp \
+ /home/matti/Projects/mandelbrot/deps/raylib/src/raylib.h \
+ /usr/include/c++/15/algorithm /usr/include/c++/15/bits/ranges_algo.h \
+ /usr/include/c++/15/pstl/glue_algorithm_defs.h \
+ /usr/include/c++/15/pstl/execution_defs.h /usr/include/c++/15/cmath \
+ /usr/include/math.h /usr/include/bits/math-vector.h \
+ /usr/include/bits/libm-simd-decl-stubs.h \
+ /usr/include/bits/flt-eval-method.h /usr/include/bits/fp-logb.h \
+ /usr/include/bits/fp-fast.h /usr/include/bits/mathcalls-macros.h \
+ /usr/include/bits/mathcalls-helper-functions.h \
+ /usr/include/bits/mathcalls.h /usr/include/bits/mathcalls-narrow.h \
+ /usr/include/bits/iscanonical.h /usr/include/c++/15/bits/specfun.h \
+ /usr/include/c++/15/tr1/gamma.tcc \
+ /usr/include/c++/15/tr1/special_function_util.h \
+ /usr/include/c++/15/tr1/bessel_function.tcc \
+ /usr/include/c++/15/tr1/beta_function.tcc \
+ /usr/include/c++/15/tr1/ell_integral.tcc \
+ /usr/include/c++/15/tr1/exp_integral.tcc \
+ /usr/include/c++/15/tr1/hypergeometric.tcc \
+ /usr/include/c++/15/tr1/legendre_function.tcc \
+ /usr/include/c++/15/tr1/modified_bessel_func.tcc \
+ /usr/include/c++/15/tr1/poly_hermite.tcc \
+ /usr/include/c++/15/tr1/poly_laguerre.tcc \
+ /usr/include/c++/15/tr1/riemann_zeta.tcc /usr/include/c++/15/utility \
+ /usr/include/c++/15/bits/stl_relops.h /usr/include/c++/15/vector \
+ /usr/include/c++/15/bits/stl_uninitialized.h \
+ /usr/include/c++/15/bits/stl_vector.h \
+ /usr/include/c++/15/bits/stl_bvector.h \
+ /usr/include/c++/15/bits/vector.tcc \
+ /home/matti/Projects/mandelbrot/include/engine/MandelbrotEngine.hpp \
+ /home/matti/Projects/mandelbrot/include/core/Numeric.hpp \
+ /usr/include/c++/15/complex /usr/include/c++/15/sstream \
+ /usr/include/c++/15/bits/sstream.tcc \
+ /home/matti/Projects/mandelbrot/deps/boost/boost/multiprecision/cpp_bin_float.hpp \
+ /home/matti/Projects/mandelbrot/deps/boost/boost/multiprecision/cpp_int.hpp \
+ /usr/include/c++/15/cstring /usr/include/string.h /usr/include/strings.h \
+ /usr/include/c++/15/iomanip /usr/include/c++/15/bits/quoted_string.h \
  /home/matti/Projects/mandelbrot/deps/boost/boost/multiprecision/detail/standalone_config.hpp \
  /usr/include/c++/15/climits \
  /usr/lib/gcc/x86_64-redhat-linux/15/include/limits.h \
@@ -192,50 +227,15 @@ CMakeFiles/MandelbrotApp.dir/src/main.cpp.o: \
  /usr/include/boost/integer_traits.hpp \
  /home/matti/Projects/mandelbrot/deps/boost/boost/static_assert.hpp \
  /home/matti/Projects/mandelbrot/deps/boost/boost/detail/workaround.hpp \
- /home/matti/Projects/mandelbrot/deps/boost/boost/multiprecision/detail/assert.hpp \
- /usr/include/boost/assert.hpp /usr/include/assert.h \
- /home/matti/Projects/mandelbrot/include/engine/job/PerturbationJob.hpp \
- /usr/include/c++/15/atomic /usr/include/c++/15/bits/atomic_base.h \
- /usr/include/c++/15/bits/atomic_lockfree_defines.h \
- /usr/include/c++/15/bits/atomic_wait.h /usr/include/syscall.h \
- /usr/include/sys/syscall.h /usr/include/asm/unistd.h \
- /usr/include/asm/unistd_64.h /usr/include/bits/syscall.h \
- /usr/include/c++/15/bits/std_mutex.h /usr/include/c++/15/cassert \
- /home/matti/Projects/mandelbrot/include/core/Numeric.hpp \
- /usr/include/c++/15/complex /usr/include/c++/15/cmath \
- /usr/include/math.h /usr/include/bits/math-vector.h \
- /usr/include/bits/libm-simd-decl-stubs.h \
- /usr/include/bits/flt-eval-method.h /usr/include/bits/fp-logb.h \
- /usr/include/bits/fp-fast.h /usr/include/bits/mathcalls-macros.h \
- /usr/include/bits/mathcalls-helper-functions.h \
- /usr/include/bits/mathcalls.h /usr/include/bits/mathcalls-narrow.h \
- /usr/include/bits/iscanonical.h /usr/include/c++/15/bits/specfun.h \
- /usr/include/c++/15/tr1/gamma.tcc \
- /usr/include/c++/15/tr1/special_function_util.h \
- /usr/include/c++/15/tr1/bessel_function.tcc \
- /usr/include/c++/15/tr1/beta_function.tcc \
- /usr/include/c++/15/tr1/ell_integral.tcc \
- /usr/include/c++/15/tr1/exp_integral.tcc \
- /usr/include/c++/15/tr1/hypergeometric.tcc \
- /usr/include/c++/15/tr1/legendre_function.tcc \
- /usr/include/c++/15/tr1/modified_bessel_func.tcc \
- /usr/include/c++/15/tr1/poly_hermite.tcc \
- /usr/include/c++/15/tr1/poly_laguerre.tcc \
- /usr/include/c++/15/tr1/riemann_zeta.tcc /usr/include/c++/15/sstream \
- /usr/include/c++/15/bits/sstream.tcc \
- /home/matti/Projects/mandelbrot/deps/boost/boost/multiprecision/cpp_bin_float.hpp \
- /home/matti/Projects/mandelbrot/deps/boost/boost/multiprecision/cpp_int.hpp \
- /usr/include/c++/15/cstring /usr/include/string.h /usr/include/strings.h \
- /usr/include/c++/15/iomanip /usr/include/c++/15/bits/quoted_string.h \
  /home/matti/Projects/mandelbrot/deps/boost/boost/multiprecision/detail/endian.hpp \
  /usr/include/boost/predef/other/endian.h \
  /usr/include/boost/predef/version_number.h \
  /usr/include/boost/predef/make.h /usr/include/boost/predef/detail/test.h \
  /usr/include/boost/predef/library/c/gnu.h \
  /usr/include/boost/predef/library/c/_prefix.h \
- /usr/include/boost/predef/detail/_cassert.h \
- /usr/include/boost/predef/os/macos.h /usr/include/boost/predef/os/ios.h \
- /usr/include/boost/predef/os/bsd.h \
+ /usr/include/boost/predef/detail/_cassert.h /usr/include/c++/15/cassert \
+ /usr/include/assert.h /usr/include/boost/predef/os/macos.h \
+ /usr/include/boost/predef/os/ios.h /usr/include/boost/predef/os/bsd.h \
  /usr/include/boost/predef/os/bsd/bsdi.h \
  /usr/include/boost/predef/os/bsd/dragonfly.h \
  /usr/include/boost/predef/os/bsd/free.h \
@@ -246,6 +246,10 @@ CMakeFiles/MandelbrotApp.dir/src/main.cpp.o: \
  /home/matti/Projects/mandelbrot/deps/boost/boost/multiprecision/detail/precision.hpp \
  /home/matti/Projects/mandelbrot/deps/boost/boost/multiprecision/traits/is_variable_precision.hpp \
  /home/matti/Projects/mandelbrot/deps/boost/boost/multiprecision/detail/number_base.hpp \
+ /home/matti/Projects/mandelbrot/deps/boost/boost/multiprecision/fwd.hpp \
+ /home/matti/Projects/mandelbrot/deps/boost/boost/multiprecision/cpp_int/cpp_int_config.hpp \
+ /home/matti/Projects/mandelbrot/deps/boost/boost/multiprecision/detail/assert.hpp \
+ /usr/include/boost/assert.hpp \
  /home/matti/Projects/mandelbrot/deps/boost/boost/multiprecision/traits/transcendental_reduction_type.hpp \
  /home/matti/Projects/mandelbrot/deps/boost/boost/multiprecision/traits/std_integer_traits.hpp \
  /home/matti/Projects/mandelbrot/deps/boost/boost/multiprecision/detail/no_exceptions_support.hpp \
@@ -254,9 +258,7 @@ CMakeFiles/MandelbrotApp.dir/src/main.cpp.o: \
  /usr/include/boost/exception/exception.hpp \
  /usr/include/boost/assert/source_location.hpp \
  /usr/include/boost/current_function.hpp \
- /usr/include/c++/15/source_location /usr/include/c++/15/utility \
- /usr/include/c++/15/bits/stl_relops.h \
- /usr/include/boost/lexical_cast.hpp \
+ /usr/include/c++/15/source_location /usr/include/boost/lexical_cast.hpp \
  /home/matti/Projects/mandelbrot/deps/boost/boost/config/pragma_message.hpp \
  /usr/include/boost/range/iterator_range_core.hpp \
  /usr/include/boost/iterator/iterator_traits.hpp \
@@ -518,9 +520,6 @@ CMakeFiles/MandelbrotApp.dir/src/main.cpp.o: \
  /usr/include/boost/preprocessor/seq/limits/enum_256.hpp \
  /usr/include/boost/concept/detail/concept_undef.hpp \
  /usr/include/boost/iterator/iterator_concepts.hpp \
- /usr/include/c++/15/algorithm /usr/include/c++/15/bits/ranges_algo.h \
- /usr/include/c++/15/pstl/glue_algorithm_defs.h \
- /usr/include/c++/15/pstl/execution_defs.h \
  /usr/include/boost/range/value_type.hpp \
  /usr/include/boost/range/detail/misc_concept.hpp \
  /usr/include/boost/type_traits/make_unsigned.hpp \
@@ -613,11 +612,7 @@ CMakeFiles/MandelbrotApp.dir/src/main.cpp.o: \
  /usr/include/c++/15/bits/hashtable_policy.h \
  /usr/include/c++/15/ext/aligned_buffer.h \
  /usr/include/c++/15/bits/node_handle.h \
- /usr/include/c++/15/bits/erase_if.h /usr/include/c++/15/vector \
- /usr/include/c++/15/bits/stl_uninitialized.h \
- /usr/include/c++/15/bits/stl_vector.h \
- /usr/include/c++/15/bits/stl_bvector.h \
- /usr/include/c++/15/bits/vector.tcc \
+ /usr/include/c++/15/bits/erase_if.h \
  /usr/include/c++/15/bits/move_only_function.h \
  /usr/include/c++/15/bits/mofunc_impl.h \
  /home/matti/Projects/mandelbrot/deps/boost/boost/config/no_tr1/cmath.hpp \
@@ -673,6 +668,12 @@ CMakeFiles/MandelbrotApp.dir/src/main.cpp.o: \
  /usr/include/c++/15/bits/allocated_ptr.h \
  /usr/include/c++/15/ext/concurrence.h \
  /usr/include/c++/15/bits/shared_ptr_atomic.h \
+ /usr/include/c++/15/bits/atomic_base.h \
+ /usr/include/c++/15/bits/atomic_lockfree_defines.h \
+ /usr/include/c++/15/bits/atomic_wait.h /usr/include/syscall.h \
+ /usr/include/sys/syscall.h /usr/include/asm/unistd.h \
+ /usr/include/asm/unistd_64.h /usr/include/bits/syscall.h \
+ /usr/include/c++/15/bits/std_mutex.h \
  /usr/include/c++/15/backward/auto_ptr.h \
  /usr/include/c++/15/bits/ranges_uninitialized.h \
  /usr/include/c++/15/bits/out_ptr.h \
@@ -887,7 +888,7 @@ CMakeFiles/MandelbrotApp.dir/src/main.cpp.o: \
  /usr/include/boost/math/special_functions/bernoulli.hpp \
  /usr/include/boost/math/special_functions/detail/unchecked_bernoulli.hpp \
  /usr/include/boost/math/special_functions/detail/bernoulli_details.hpp \
- /usr/include/boost/math/tools/atomic.hpp \
+ /usr/include/boost/math/tools/atomic.hpp /usr/include/c++/15/atomic \
  /usr/include/boost/math/tools/toms748_solve.hpp \
  /usr/include/c++/15/mutex /usr/include/c++/15/bits/chrono.h \
  /usr/include/c++/15/ratio /usr/include/c++/15/bits/parse_numbers.h \
@@ -909,14 +910,6 @@ CMakeFiles/MandelbrotApp.dir/src/main.cpp.o: \
  /usr/include/boost/math/special_functions/detail/erf_inv.hpp \
  /home/matti/Projects/mandelbrot/deps/boost/boost/multiprecision/cpp_bin_float/io.hpp \
  /home/matti/Projects/mandelbrot/deps/boost/boost/multiprecision/cpp_bin_float/transcendental.hpp \
- /home/matti/Projects/mandelbrot/include/engine/job/../../macro_util.hpp \
- /home/matti/Projects/mandelbrot/include/engine/job/RenderJob.hpp \
- /usr/include/c++/15/variant \
- /home/matti/Projects/mandelbrot/include/engine/job/../util/TaggedReferenceCounter.hpp \
- /home/matti/Projects/mandelbrot/include/engine/job/../job/EscapeTimeJob.hpp \
- /home/matti/Projects/mandelbrot/include/gui/MandelbrotGUI.hpp \
- /home/matti/Projects/mandelbrot/deps/raylib/src/raylib.h \
- /home/matti/Projects/mandelbrot/include/engine/MandelbrotEngine.hpp \
  /home/matti/Projects/mandelbrot/include/concurrency/WorkerPool.hpp \
  /usr/include/c++/15/thread /usr/include/c++/15/stop_token \
  /usr/include/c++/15/bits/std_thread.h /usr/include/c++/15/semaphore \
@@ -924,12 +917,19 @@ CMakeFiles/MandelbrotApp.dir/src/main.cpp.o: \
  /usr/include/c++/15/bits/atomic_timed_wait.h \
  /usr/include/c++/15/bits/this_thread_sleep.h /usr/include/sys/time.h \
  /usr/include/semaphore.h /usr/include/bits/semaphore.h \
+ /home/matti/Projects/mandelbrot/include/macro_util.hpp \
  /home/matti/Projects/mandelbrot/include/engine/util/ColorUtil.hpp \
  /home/matti/Projects/mandelbrot/include/core/Pixel.hpp \
  /home/matti/Projects/mandelbrot/include/engine/DoubleCanvas.hpp \
  /home/matti/Projects/mandelbrot/include/engine/dto/FrameView.hpp \
  /home/matti/Projects/mandelbrot/include/engine/EscapeTimeEngine.hpp \
  /home/matti/Projects/mandelbrot/include/core/Kernel.hpp \
+ /home/matti/Projects/mandelbrot/include/engine/job/RenderJob.hpp \
+ /usr/include/c++/15/variant \
+ /home/matti/Projects/mandelbrot/include/engine/job/../util/TaggedReferenceCounter.hpp \
+ /home/matti/Projects/mandelbrot/include/engine/job/../job/EscapeTimeJob.hpp \
+ /home/matti/Projects/mandelbrot/include/engine/job/../job/Counters.hpp \
+ /home/matti/Projects/mandelbrot/include/engine/job/../job/PerturbationJob.hpp \
  /home/matti/Projects/mandelbrot/include/engine/PerturbationEngine.hpp \
  /home/matti/Projects/mandelbrot/include/engine/util/LazyVector.hpp \
  /home/matti/Projects/mandelbrot/include/engine/util/RebaseMatrix.hpp \
@@ -938,7 +938,12 @@ CMakeFiles/MandelbrotApp.dir/src/main.cpp.o: \
  /home/matti/Projects/mandelbrot/include/engine/dto/../Camera.hpp \
  /home/matti/Projects/mandelbrot/include/gui/RenderSettings.hpp \
  /home/matti/Projects/mandelbrot/include/gui/Presenter.hpp \
+ /home/matti/Projects/mandelbrot/include/gui/Exporter.hpp \
+ /usr/include/c++/15/filesystem /usr/include/c++/15/bits/fs_fwd.h \
+ /usr/include/c++/15/bits/fs_path.h /usr/include/c++/15/codecvt \
+ /usr/include/c++/15/bits/fs_dir.h /usr/include/c++/15/bits/fs_ops.h \
  /home/matti/Projects/mandelbrot/include/gui/util/SettingsSidebar.hpp \
  /home/matti/Projects/mandelbrot/include/gui/util/UITheme.hpp \
+ /home/matti/Projects/mandelbrot/include/gui/util/Widgets.hpp \
  /home/matti/Projects/mandelbrot/include/gui/util/../Palettes.hpp \
  /home/matti/Projects/mandelbrot/include/gui/util/LegendPanel.hpp

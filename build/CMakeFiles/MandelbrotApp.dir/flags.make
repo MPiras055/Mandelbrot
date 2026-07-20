@@ -6,5 +6,5 @@ CXX_DEFINES = -DGRAPHICS_API_OPENGL_33 -DPLATFORM_DESKTOP
 
 CXX_INCLUDES = -I/home/matti/Projects/mandelbrot/SYSTEM -I/home/matti/Projects/mandelbrot/include -I/home/matti/Projects/mandelbrot/deps/boost -I/home/matti/Projects/mandelbrot/deps/raylib/src
 
-CXX_FLAGS = -O3 -DNDEBUG -std=gnu++26 -O3 -march=native -ffast-math -Wno-deprecated-literal-operator
+CXX_FLAGS = -O3 -DNDEBUG -std=gnu++26 -flto=auto -fno-fat-lto-objects -O3 -march=native -mtune=native -ftree-vectorize -funroll-loops -ffast-math -fno-finite-math-only -fno-signed-zeros -Wno-deprecated-literal-operator
 

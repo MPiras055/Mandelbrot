@@ -1,7 +1,6 @@
 #pragma once
 #include <atomic>
 #include <cassert>
-#include <cstdio>
 #include "core/Numeric.hpp"
 #include "core/Kernel.hpp"
 #include "util/ColorUtil.hpp"
@@ -25,11 +24,11 @@ using ComplexDouble = core::ComplexDouble;
  * nested method.)
  */
 class PerturbationEngine {
-    static constexpr unsigned int TILE_SIZE = core::CHUNK_BLOCK;
     //initialize matrix dimensions
     using RebaseMatrix = RebaseMatrix__<64>;      // wide grid for the parallel high-res search
     using RebaseMatrixLow = RebaseMatrix__<12>;    // small grid for the solo low-res probe (64 cells)
     static constexpr unsigned int MAX_WORKERS = 128;
+    /// Neighbourhood-search shrink per pass (used at every `shrinkAndCenter` call site).
     static constexpr double REBASE_SHRINK_FACTOR = 0.25;
     // The low-res probe only needs to RANK cells by depth, so cap its per-cell iterations
     // well below the render budget (the reference orbit itself is still built to full depth).
@@ -105,7 +104,6 @@ class PerturbationEngine {
         // BLA merge tree: blaLevels[l][j] covers iterations [j·2^l, (j+1)·2^l).
         std::vector<std::vector<BLA>> blaLevels;
         double dc_max{0.0};                    // max |pixel − reference| over the view (radii scale)
-        size_t orbitLen{0};                    // == orbit.size(), cached for the render walk
         std::complex<core::BigFloat> reference;     // absolute reference (center + probe delta)
         unsigned int iterations{0};            // orbit depth this cache was built to
         bool valid{false};
@@ -114,8 +112,12 @@ class PerturbationEngine {
         /// escaped). Polls @p job so a long BigFloat build aborts promptly when the
         /// frame is superseded; on abort it returns early with the cache left invalid
         /// (the caller checks and does not publish it).
+        /// @param progress optional counter bumped as the orbit is built, so the GUI can
+        /// show movement during the (potentially long) BigFloat reference build instead of
+        /// sitting at 0%. Written on the step that already polls abort, so it is free.
         size_t build(const job::RenderJob& job, std::complex<core::BigFloat> ref,
-                     size_t max_iterations, double dc_max_in) {
+                     size_t max_iterations, double dc_max_in,
+                     std::atomic<uint32_t>* progress = nullptr) {
             // Invalidate up front: this cache object is a per-worker singleton that may
             // still be pointed at by `lastRef_` from an EARLIER successful build. If this
             // build aborts midway we must not leave `valid == true` over a fresh short
@@ -140,18 +142,18 @@ class PerturbationEngine {
                 // Poll abort off the hot path so a superseded frame drops its build fast.
                 // Drop the stale BLA tree on the way out so no reader can pair it with the
                 // partial orbit left behind (`valid` stays false — see the note above).
-                if ((i & 0xFF) == 0 && job.aborted()) { blaLevels.clear(); orbitLen = 0; return actual_length; }
+                if ((i & core::ABORT_POLL_MASK) == 0) {
+                    if (job.aborted()) { blaLevels.clear(); return actual_length; }
+                    if (progress) progress->store(static_cast<uint32_t>((i * 100) / max_iterations),
+                                                  std::memory_order_relaxed);
+                }
 
                 // Store Z_i (cast to double for the fast per-pixel loop + BLA table).
                 orbit.push_back(OrbitRecord{
                     ComplexDouble{ static_cast<double>(z_r), static_cast<double>(z_i) }});
 
-                // Step the reference orbit forward in BigFloat.
-                core::BigFloat next_z_r = z_r * z_r - z_i * z_i + reference.real();
-                core::BigFloat next_z_i = core::BigFloat(2.0) * z_r * z_i + reference.imag();
-
-                z_r = next_z_r;
-                z_i = next_z_i;
+                // Step the reference orbit forward in BigFloat (shared canonical step).
+                core::mandelStep(z_r, z_i, reference.real(), reference.imag());
                 actual_length++;
 
                 // If the reference orbit escapes, stop building early.
@@ -177,7 +179,6 @@ class PerturbationEngine {
             // tol trades skip aggressiveness vs approximation error (visible glitches).
             constexpr double BLA_TOL = 1.0 / static_cast<double>(1u << 24);
             blaLevels.clear();
-            orbitLen = L;
             if (L == 0) return;
 
             // Level 0: δ_{i+1} ≈ 2·Z_i·δ_i + dc  →  A = 2 Z_i, B = 1, r = tol·|2 Z_i|.
@@ -247,41 +248,6 @@ class PerturbationEngine {
         return ptr;
     }
 
-    // ---- Frame-global glitch resolution (Phase 4) ----
-    // Stranded pixels (glitched / outran a short reference) are recorded here during
-    // render, then re-perturbed against ONE shared secondary reference per round so a
-    // glitched blob resolves coherently (no per-tile seams). Double-buffered: round r
-    // reads buf[cur], appends survivors to buf[next]; the round leader swaps them.
-    struct StrandedPixel { uint32_t px, py, brk; };
-    std::vector<StrandedPixel> resolveBuf_[2];
-    std::atomic<size_t>        resolveCount_[2];
-    int                        resolveCurSel_{0};   // which buf is "cur" (leader-managed)
-    std::atomic<uint32_t>      resolveInit_{0};     // one-shot round-0 builder election
-
-    // The round's shared secondary reference (built by the round leader, read by all).
-    std::vector<ComplexDouble> secOrbit_;
-    double secRefSdx_{0.0}, secRefSdy_{0.0};
-    size_t secLen_{0};
-    bool   secEscaped_{false};
-    double secFinalR2_{0.0};
-    size_t secPickIdx_{0};   // index (in cur buf) of the pixel used as this round's secondary
-
-    // Reset per-frame resolve state + size the buffers to the whole frame. Called by the
-    // cache-publishing worker BEFORE it publishes (so the reset happens-before any render
-    // append, which happens-after every worker's waitCache).
-    void prepareResolveFrame(size_t width, size_t height) {
-        const size_t cap = width * height;
-        if (resolveBuf_[0].size() < cap) resolveBuf_[0].resize(cap);
-        if (resolveBuf_[1].size() < cap) resolveBuf_[1].resize(cap);
-        resolveCount_[0].store(0, std::memory_order_relaxed);
-        resolveCount_[1].store(0, std::memory_order_relaxed);
-        resolveCurSel_ = 0;
-        resolveInit_.store(0, std::memory_order_relaxed);
-    }
-
-    // Run the frame-global resolution phase (all workers cooperate). Defined in the .cpp.
-    void processResolvePhase(job::RenderJob& job, const job::RenderJob::JobSpecs& specs);
-
     const util::Gradient& gradient;
 
     void processChunkScalar(
@@ -304,12 +270,6 @@ public:
     static inline size_t getChunks(unsigned int width, unsigned int height) noexcept {
         return core::ComputeTotalChunks(width, height);
     }
-
-    unsigned int evaluateBigFloatDepth(
-        const job::RenderJob& job_ref,
-        const std::complex<core::BigFloat>& c, 
-        unsigned int max_iter);
-    
 };
 
 } // namespace engine

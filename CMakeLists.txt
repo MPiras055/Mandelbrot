@@ -14,8 +14,9 @@ set(CMAKE_BUILD_TYPE Release)
 # =====================================================================
 # 1. TRACK ALL SOURCE AND HEADER FILES FOR THE TARGET
 # =====================================================================
-# We explicitly gather all .hpp and .h files. This maps your entire include/
-# folder structure into the build system so clangd stops treating headers 
+# We explicitly gather all .hpp and .h files. This maps 
+# your entire include/ folder structure into the build 
+# system so clangd stops treating headers 
 # inside subdirectories as isolated orphans.
 file(GLOB_RECURSE PROJECT_HEADERS 
     "${CMAKE_CURRENT_SOURCE_DIR}/include/*.hpp" 
@@ -37,7 +38,8 @@ add_subdirectory(${CMAKE_SOURCE_DIR}/deps/raylib)
 # =====================================================================
 # 3. DEFINE EXECUTABLE TARGET
 # =====================================================================
-# Passing both sources AND headers forces CMake to group them under the same target.
+# Passing both sources AND headers forces 
+# CMake to group them under the same target.
 add_executable(${PROJECT_NAME} 
     ${PROJECT_SOURCES}
     ${PROJECT_HEADERS}
@@ -55,10 +57,32 @@ target_include_directories(${PROJECT_NAME}
     SYSTEM PRIVATE 
         ${CMAKE_CURRENT_SOURCE_DIR}/deps/boost
 )
+# =====================================================================
+# 5. ADVANCED COMPILER OPTIMIZATIONS
+# =====================================================================
 target_compile_options(${PROJECT_NAME} PRIVATE 
-    $<$<CONFIG:Release>:-O3 -march=native -ffast-math>
+    # Base aggressive optimization & native architecture targeting
+    $<$<CONFIG:Release>:-O3 -march=native -mtune=native>
+    
+    # Advanced Vectorization & Loop Unrolling
+    $<$<CONFIG:Release>:-ftree-vectorize -funroll-loops>
+    
+    # Aggressive Math (Crucial for Mandelbrot escape-time loops)
+    $<$<CONFIG:Release>:-ffast-math -fno-finite-math-only -fno-signed-zeros>
+    
+    # Silencing the specific C++26 warning you had
     $<$<CXX_COMPILER_ID:GNU,Clang>:-Wno-deprecated-literal-operator>
 )
+
+# Enable Interprocedural Optimization (LTO) across translation units
+include(CheckIPOSupported)
+check_ipo_supported(RESULT lto_supported OUTPUT error)
+if(lto_supported)
+    message(STATUS "Link-Time Optimization (LTO) enabled.")
+    set_property(TARGET ${PROJECT_NAME} PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE)
+else()
+    message(STATUS "LTO not supported: ${error}")
+endif()
 
 # =====================================================================
 # 5. COMPILER OPTIMIZATIONS & LINKING

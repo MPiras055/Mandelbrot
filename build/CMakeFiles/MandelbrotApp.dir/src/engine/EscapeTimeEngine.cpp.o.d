@@ -921,6 +921,7 @@ CMakeFiles/MandelbrotApp.dir/src/engine/EscapeTimeEngine.cpp.o: \
  /home/matti/Projects/mandelbrot/include/engine/job/../util/TaggedReferenceCounter.hpp \
  /home/matti/Projects/mandelbrot/include/engine/job/../util/../../macro_util.hpp \
  /home/matti/Projects/mandelbrot/include/engine/job/../job/EscapeTimeJob.hpp \
+ /home/matti/Projects/mandelbrot/include/engine/job/../job/Counters.hpp \
  /home/matti/Projects/mandelbrot/include/engine/job/../job/PerturbationJob.hpp \
  /usr/include/c++/15/experimental/simd \
  /usr/include/c++/15/experimental/bits/simd_detail.h \

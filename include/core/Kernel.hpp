@@ -5,23 +5,24 @@
  * @file Kernel.hpp
  * @brief Shared Mandelbrot primitives (tiling + iteration step).
  *
- * @details Both rendering strategies previously carried a byte-identical
- * `CalculateTotalChunks`, and the z = z^2 + c recurrence is spelled out several
- * times across the engines. This header is the single home for those primitives.
+ * @details Both rendering strategies previously carried byte-identical copies of the
+ * chunk-count formula and the chunk-index-to-tile-bounds mapping, and the z = z^2 + c
+ * recurrence is spelled out several times across the engines. This header is the single
+ * home for those primitives.
  *
- * @note Phase-1 (soft) scope: only the chunk-count formula is rewired here — it
- * is a pure numeric helper with no behavioural effect. The hand-tuned inner loops
- * (the ETA SIMD kernel, the perturbation reference/delta loops) keep their own
- * spellings for now; they will consolidate onto `mandelStep` during the Phase-2
- * engine rewrites, where those loops are being rewritten regardless.
+ * @note The hand-tuned inner loops keep their own spellings on purpose: the ETA kernel
+ * runs on `stdx::simd` and carries `x2`/`y2` across the iteration boundary (which
+ * `mandelStep` would recompute), and the perturbation loop needs the fused delta form
+ * `2(zr*dx - zi*dy) + dx^2 - dy^2 + dc`. Only the non-hot BigFloat orbit builders
+ * consolidate onto `mandelStep`.
  */
 namespace core {
 
-    // Tiling granularity: work is diced into 32x32 blocks.
+    // Tiling granularity: work is diced into CHUNK_BLOCK-square tiles.
     inline constexpr unsigned int CHUNK_BLOCK = 64;
 
     /**
-     * @brief Number of 32x32 tiles covering a width x height render area.
+     * @brief Number of tiles covering a width x height render area.
      * @details Single source for both engines' chunk counting (identical to the
      * formula they each used before).
      */
@@ -32,10 +33,36 @@ namespace core {
     }
 
     /**
+     * @brief Shared cadence for cooperative abort polling inside long loops.
+     * @details Poll when `(i & ABORT_POLL_MASK) == 0`. Every abort-pollable loop uses this
+     * one stride so the responsiveness/overhead trade-off is stated in a single place —
+     * the sites previously used 256, 100, every-pixel, and (in the probe) never.
+     */
+    inline constexpr unsigned int ABORT_POLL_MASK = 0xFF;   // every 256 iterations
+
+    /// Half-open pixel bounds of one tile: [x0, x1) x [y0, y1).
+    struct TileBounds { int x0, y0, x1, y1; };
+
+    /**
+     * @brief Map a 1D chunk index to its 2D tile bounds, clamped to the render area.
+     * @details Both engines derived this identically; sharing it also removes a
+     * size_t->int narrowing that the perturbation copy performed twice. Computed once
+     * per chunk (never in an inner loop), so there is no hot-path cost.
+     */
+    inline TileBounds ChunkTile(size_t chunk_idx, unsigned int width, unsigned int height) noexcept {
+        const int w = static_cast<int>(width);
+        const int h = static_cast<int>(height);
+        const int block = static_cast<int>(CHUNK_BLOCK);
+        const int cols = (w + block - 1) / block;
+        const int x0 = (static_cast<int>(chunk_idx) % cols) * block;
+        const int y0 = (static_cast<int>(chunk_idx) / cols) * block;
+        return { x0, y0, (x0 + block < w) ? x0 + block : w,
+                         (y0 + block < h) ? y0 + block : h };
+    }
+
+    /**
      * @brief Canonical z = z^2 + c step, in place.
      * @tparam T scalar float type (double / BigFloat).
-     * @note Provided as the shared definition the Phase-2 rewrites consolidate on;
-     * not yet wired into the hot loops (see file note).
      */
     template <typename T>
     inline void mandelStep(T& zr, T& zi, const T& cr, const T& ci) noexcept {

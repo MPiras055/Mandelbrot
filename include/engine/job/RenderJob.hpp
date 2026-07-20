@@ -92,14 +92,6 @@ namespace engine::job {
         }
 
         /**
-         * @brief: releases a job previously acquired and blocks the
-         * caller until all the other threads have released the job
-         */
-        inline void releaseWait() noexcept {
-            refCount.release_wait();
-        }
-
-        /**
          * @brief: check if a job is registered as completed or aborted
          *
          * @note: in this specific implementation we're only considering
@@ -149,31 +141,11 @@ namespace engine::job {
         }
 
         /**
-         * @brief: checks if a job was sealed (meaning it was set as aborted or completed)
-         * @note: this check is made to be a lightweight for workers, we don't actually
-         * check if the job was aborted or completed, we just check if the seal flag was
-         * setted (this usually mean that the job is old and should be throwed)
-         */
-        inline bool sealed() const noexcept {
-            return refCount.get_tag();
-        }
-
-        /**
          * @brief: templated get method to get the variant job state
          * @note: this method should be called only if a previous ::acquire()
          * was successful (or unless we're sure that no thread can modify the object)
          */
         template<typename T> [[nodiscard]] inline T& getState() noexcept {
-            return std::get<T>(jobState);
-        }
-
-        /**
-         * @brief: templated get method to get the variant job state in an
-         * immutable manner
-         * @note: this method should be called only if a previous ::acquire()
-         * was successful (or unless we're sure that no thread can modify the object)
-         */
-        template<typename T> [[nodiscard]] inline const T& getState_const() const noexcept {
             return std::get<T>(jobState);
         }
 

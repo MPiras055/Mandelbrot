@@ -61,8 +61,6 @@ public:
         stop_.store(true, std::memory_order_release);
     }
 
-    size_t size() const noexcept { return workers_.size(); }
-
     /// Joins every worker; idempotent (safe to call from both the engine and dtor).
     void join() {
         for (std::thread& w : workers_) {

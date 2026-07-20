@@ -97,8 +97,6 @@ public:
         }
     }
 
-    void toggleDiffusion() { diffusion_on_ = !diffusion_on_; }
-
 private:
     void loadDiffusionShader() {
         const char* code = R"(

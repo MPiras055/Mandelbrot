@@ -74,18 +74,12 @@ CMakeFiles/MandelbrotApp.dir/src/engine/PerturbationEngine.cpp.o: \
  /usr/include/c++/15/bits/functexcept.h \
  /usr/include/c++/15/bits/exception_defines.h \
  /usr/include/c++/15/bits/std_mutex.h /usr/include/c++/15/cassert \
- /usr/include/assert.h /usr/include/c++/15/cstdio /usr/include/stdio.h \
- /usr/lib/gcc/x86_64-redhat-linux/15/include/stdarg.h \
- /usr/include/bits/types/__fpos_t.h /usr/include/bits/types/__mbstate_t.h \
- /usr/include/bits/types/__fpos64_t.h /usr/include/bits/types/__FILE.h \
- /usr/include/bits/types/FILE.h /usr/include/bits/types/struct_FILE.h \
- /usr/include/bits/types/cookie_io_functions_t.h \
- /usr/include/bits/stdio_lim.h /usr/include/bits/floatn.h \
- /usr/include/bits/floatn-common.h /usr/include/bits/stdio.h \
+ /usr/include/assert.h \
  /home/matti/Projects/mandelbrot/include/core/Numeric.hpp \
  /usr/include/c++/15/complex /usr/include/c++/15/cmath \
  /usr/include/c++/15/bits/requires_hosted.h /usr/include/math.h \
  /usr/include/bits/math-vector.h /usr/include/bits/libm-simd-decl-stubs.h \
+ /usr/include/bits/floatn.h /usr/include/bits/floatn-common.h \
  /usr/include/bits/flt-eval-method.h /usr/include/bits/fp-logb.h \
  /usr/include/bits/fp-fast.h /usr/include/bits/mathcalls-macros.h \
  /usr/include/bits/mathcalls-helper-functions.h \
@@ -128,8 +122,11 @@ CMakeFiles/MandelbrotApp.dir/src/engine/PerturbationEngine.cpp.o: \
  /usr/include/c++/15/iosfwd /usr/include/c++/15/bits/stringfwd.h \
  /usr/include/c++/15/bits/memoryfwd.h /usr/include/c++/15/bits/postypes.h \
  /usr/include/c++/15/cwchar /usr/include/wchar.h \
+ /usr/lib/gcc/x86_64-redhat-linux/15/include/stdarg.h \
  /usr/include/bits/types/wint_t.h /usr/include/bits/types/mbstate_t.h \
- /usr/include/c++/15/exception /usr/include/c++/15/bits/exception_ptr.h \
+ /usr/include/bits/types/__mbstate_t.h /usr/include/bits/types/__FILE.h \
+ /usr/include/bits/types/FILE.h /usr/include/c++/15/exception \
+ /usr/include/c++/15/bits/exception_ptr.h \
  /usr/include/c++/15/bits/cxxabi_init_exception.h \
  /usr/include/c++/15/typeinfo /usr/include/c++/15/bits/nested_exception.h \
  /usr/include/c++/15/bits/char_traits.h \
@@ -163,6 +160,11 @@ CMakeFiles/MandelbrotApp.dir/src/engine/PerturbationEngine.cpp.o: \
  /usr/include/c++/15/bits/charconv.h \
  /usr/include/c++/15/x86_64-redhat-linux/bits/error_constants.h \
  /usr/include/c++/15/ext/string_conversions.h /usr/include/c++/15/cstdlib \
+ /usr/include/c++/15/cstdio /usr/include/stdio.h \
+ /usr/include/bits/types/__fpos_t.h /usr/include/bits/types/__fpos64_t.h \
+ /usr/include/bits/types/struct_FILE.h \
+ /usr/include/bits/types/cookie_io_functions_t.h \
+ /usr/include/bits/stdio_lim.h /usr/include/bits/stdio.h \
  /usr/include/c++/15/bits/basic_string.tcc \
  /usr/include/c++/15/bits/memory_resource.h /usr/include/c++/15/cstddef \
  /usr/include/c++/15/bits/uses_allocator.h \
@@ -919,6 +921,7 @@ CMakeFiles/MandelbrotApp.dir/src/engine/PerturbationEngine.cpp.o: \
  /home/matti/Projects/mandelbrot/include/engine/job/../util/TaggedReferenceCounter.hpp \
  /home/matti/Projects/mandelbrot/include/engine/job/../util/../../macro_util.hpp \
  /home/matti/Projects/mandelbrot/include/engine/job/../job/EscapeTimeJob.hpp \
+ /home/matti/Projects/mandelbrot/include/engine/job/../job/Counters.hpp \
  /home/matti/Projects/mandelbrot/include/engine/job/../job/PerturbationJob.hpp \
  /home/matti/Projects/mandelbrot/include/engine/util/LazyVector.hpp \
  /home/matti/Projects/mandelbrot/include/engine/util/RebaseMatrix.hpp

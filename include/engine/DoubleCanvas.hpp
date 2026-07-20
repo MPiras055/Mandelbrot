@@ -61,8 +61,6 @@ public:
      */
     void resize_screen(size_t new_screen_w, size_t new_screen_h);
 
-    size_t screen_width()  const noexcept { return screen_width_; }
-    size_t screen_height() const noexcept { return screen_height_; }
 
 private:
     size_t layer() const noexcept { return screen_width_ * screen_height_; }

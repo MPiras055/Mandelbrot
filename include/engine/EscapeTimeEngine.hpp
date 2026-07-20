@@ -15,7 +15,6 @@ namespace engine {
  * explicitly instantiated in EscapeTimeEngine.cpp.
  */
 class EscapeTimeEngine {
-    static constexpr int TILE_SIZE = core::CHUNK_BLOCK;
 public:
     explicit EscapeTimeEngine(const util::Gradient& gradient, core::Pixel*& back_buf_ref)
         : gradient(gradient), back_buffer(back_buf_ref) {}

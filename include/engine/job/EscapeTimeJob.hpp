@@ -3,6 +3,7 @@
 #include <limits>
 #include <atomic>
 #include <cassert>
+#include "Counters.hpp"
 #include "../../macro_util.hpp"
 
 namespace engine::job {
@@ -43,8 +44,8 @@ struct EscapeTimeJob {
      * @note: doesn't check if the job has been aborted
      */
     unsigned int percentageStatus(size_t total_chunks) const noexcept {
-        //proc : total_chunks = x : 100
-        return ((done_chunk.load(std::memory_order_relaxed) & ~MSB_MASK) * 100) / total_chunks;
+        return counters::percentOf(done_chunk.load(std::memory_order_relaxed) & ~MSB_MASK,
+                                   total_chunks);
     }
 
     /**

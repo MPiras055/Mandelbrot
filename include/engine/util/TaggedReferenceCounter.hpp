@@ -22,32 +22,13 @@ struct TaggedReferenceCount {
     using u64 = uint64_t;
     public:
     // Bit Layout: [ 1-bit TAG | 31-bit VERSION | 32-bit REFCOUNT ]
-    CACHE_ALIGN std::atomic<u64> word{0ull};  
+    CACHE_ALIGN std::atomic<u64> word{0ull};
     CACHE_PAD(std::atomic<u64>)
-    static inline thread_local bool is_active{false};
 
     static constexpr u64 REFCOUNT_MASK = 0x00000000FFFFFFFFull; // Lower 32 bits
     static constexpr u64 TAG_MASK      = 1ull << 63;            // Most Significant Bit (MSB)
     static constexpr u64 VERSION_MASK  = 0x7FFFFFFF00000000ull; // Middle 31 bits
     static constexpr unsigned int VERSION_SHIFT = 32;
-
-    /**
-     * @brief: returns the current version of the reference counter
-     * @rerturns: u64 meant for `::has_version()` compare
-     */
-    u64 get_version() const noexcept {
-        return (word.load(std::memory_order_acquire) & VERSION_MASK) >> VERSION_SHIFT;
-    }
-
-    /**
-     * @brief: checks if the current version of the counter is the one provided
-     * @param: version to check agains
-     * @returns: true if the version of the reference counter matches the
-     * one provided
-     */
-    bool has_version(u64 v) const noexcept {
-        return get_version() == v;
-    }
 
     /**
      * @brief: checks if no entity is holding the reference counter
@@ -71,13 +52,6 @@ struct TaggedReferenceCount {
             return false;
         }
         return true;
-    }
-
-    /**
-     * @brief: get the word content for comparison
-     */
-    u64 data() const noexcept {
-        return word.load(std::memory_order_acquire);
     }
 
     /**
@@ -118,19 +92,6 @@ struct TaggedReferenceCount {
         //compute the new version
         u64 new_version_mask = (current + (1ull << 32)) & VERSION_MASK;
         word.store(new_version_mask,std::memory_order_release);
-        word.notify_all();
-    }
-
-    /**
-     * @brief: advances the version of a not (possibly untagged) reference counter
-     * @returns: true if the reference was advanced to the next version, false otherwise
-     */
-    bool reset_advance_untagged() noexcept {
-        u64 current = word.load(std::memory_order_acquire);
-        if((current & REFCOUNT_MASK) != 0) return false;
-        u64 new_version_mask = (current + (1ull << 32)) & VERSION_MASK;
-        //if the CAS fails then the reference counter allowed one thread
-        return word.compare_exchange_strong(current,new_version_mask,std::memory_order_acq_rel,std::memory_order_release);
         word.notify_all();
     }
 

@@ -17,18 +17,11 @@ void EscapeTimeEngine::processChunkSIMD(const job::RenderJob::ETAJob& job_ref,
     static constexpr bool OPT_CARDIOID_BULB = true;
 
     const int signed_width = static_cast<int>(specs.width);
-    const int signed_height = static_cast<int>(specs.height);
 
-    // 1. Map 1D chunk_idx to 2D grid coordinates (Factoring out total_chunks entirely)
-    const int grid_cols = (signed_width + TILE_SIZE - 1) / TILE_SIZE;
-    const int grid_x = static_cast<int>(chunk_idx) % grid_cols;
-    const int grid_y = static_cast<int>(chunk_idx) / grid_cols;
-
-    // 2. Compute exact pixel boundaries for this specific tile
-    const int start_x = grid_x * TILE_SIZE;
-    const int end_x   = std::min(start_x + TILE_SIZE, signed_width);
-    const int start_y = grid_y * TILE_SIZE;
-    const int end_y   = std::min(start_y + TILE_SIZE, signed_height);
+    // Tile bounds for this chunk (shared with the perturbation engine).
+    const core::TileBounds tile = core::ChunkTile(chunk_idx, specs.width, specs.height);
+    const int start_x = tile.x0, end_x = tile.x1;
+    const int start_y = tile.y0, end_y = tile.y1;
 
     const unsigned int max_iteration = specs.iterations;
     constexpr int V_WIDTH = static_cast<int>(stdx::simd<F>::size());
@@ -44,8 +37,12 @@ void EscapeTimeEngine::processChunkSIMD(const job::RenderJob::ETAJob& job_ref,
     core::Pixel* const __restrict__ raw_canvas = back_buffer;
     const IntF iterMaxCast = static_cast<IntF>(max_iteration);
 
-    // Restrict rendering purely to the bounds of the 2D tile
+    // Restrict rendering purely to the bounds of the 2D tile.
+    // Abort is polled per ROW, not per pixel: the old per-pixel check issued an acquire
+    // load for every pixel in the frame, and a single row is already a bounded amount of
+    // work to throw away.
     for (int py = start_y; py < end_y; ++py) {
+        if (job_ref.aborted()) return;
         core::Pixel* const row_ptr = raw_canvas + (py * signed_width);
         const stdx::simd<F> c_imag = f_yMin + (static_cast<F>(py) * f_stepY);
         const stdx::simd<F> c_imag_sq = c_imag * c_imag;
@@ -113,7 +110,6 @@ void EscapeTimeEngine::processChunkSIMD(const job::RenderJob::ETAJob& job_ref,
             const int valid_lanes = std::min(V_WIDTH, end_x - px);
 
             for (int i = 0; i < valid_lanes; ++i) {
-                if (job_ref.aborted()) return;
                 row_ptr[px + i] = util::ColorUtil::Compute(
                     static_cast<unsigned int>(iters[i]), max_iteration, static_cast<float>(final_r2[i]), gradient
                 );

@@ -103,26 +103,6 @@ public:
     }
 
     /**
-     * @brief: checks if a job is the latest one
-     * @param: immutable RenderJob reference
-     * @returns true: if the pointer of the argument matches the pointer of the last added job
-     * @note: the pointer comparison is guaranteed because the underlying buffer never resizes
-     */
-    inline bool is_latest(const RenderJob& j) const {
-        const RenderJob* const latest_ptr = buffer + (tail.load(std::memory_order_acquire) % size_);
-        return (&j) == latest_ptr;
-    }
-
-    /**
-     * @brief: check if a stamp is the latest one
-     * @param: uint64_t stamp
-     * @returns: true if the argument stamp is bitwise equal to the latest stamp
-     */
-    inline bool is_latest_stamp(uint64_t j_stamp) const {
-        return tail.load(std::memory_order_acquire) == j_stamp;
-    }
-
-    /**
      * @brief: wait until the last job has the one provided
      * or you're notified
      */
@@ -131,13 +111,6 @@ public:
             if(tail.load(std::memory_order_acquire) != curr_stamp) break;
             tail.wait(curr_stamp, std::memory_order_acquire);
         } while(true);
-    }
-
-    /**
-     * @brief: unblock all waiting thread
-     */
-    inline void notify_all() {
-        tail.notify_all();
     }
 
     /**

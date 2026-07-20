@@ -930,10 +930,12 @@ CMakeFiles/MandelbrotApp.dir/src/engine/MandelbrotEngine.cpp.o: \
  /usr/include/c++/15/variant \
  /home/matti/Projects/mandelbrot/include/engine/job/../util/TaggedReferenceCounter.hpp \
  /home/matti/Projects/mandelbrot/include/engine/job/../job/EscapeTimeJob.hpp \
+ /home/matti/Projects/mandelbrot/include/engine/job/../job/Counters.hpp \
  /home/matti/Projects/mandelbrot/include/engine/job/../job/PerturbationJob.hpp \
  /home/matti/Projects/mandelbrot/include/engine/PerturbationEngine.hpp \
  /home/matti/Projects/mandelbrot/include/engine/util/LazyVector.hpp \
  /home/matti/Projects/mandelbrot/include/engine/util/RebaseMatrix.hpp \
  /home/matti/Projects/mandelbrot/include/engine/job/RenderJobStack.hpp \
  /home/matti/Projects/mandelbrot/include/engine/dto/FrameRequest.hpp \
- /home/matti/Projects/mandelbrot/include/engine/dto/../Camera.hpp
+ /home/matti/Projects/mandelbrot/include/engine/dto/../Camera.hpp \
+ /usr/include/c++/15/chrono /usr/include/c++/15/bits/chrono_io.h

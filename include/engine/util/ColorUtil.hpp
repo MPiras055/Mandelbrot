@@ -41,21 +41,8 @@ struct Gradient {
  */
 class ColorUtil {
 public:
-    // Internal constant for fallback hard-limits, if required by external bounds logic.
-    static constexpr size_t MAX_ITER = 2048;
-
     // --- UTILITIES & HELPERS ---
-
-    /**
-     * @brief Sorts a gradient vector in-place.
-     * @note The UI or Application layer MUST call this once whenever a new gradient is built, 
-     * BEFORE passing it to the compute functions.
-     */
-    static void SortGradient(std::vector<GradientStop>& stops) {
-        std::sort(stops.begin(), stops.end(), [](const GradientStop& a, const GradientStop& b) {
-            return a.position < b.position;
-        });
-    }
+    // (Gradient sorting lives on Gradient::prepare(); this class is stateless maths only.)
 
     /**
      * @brief Linearly interpolates (LERPs) between two distinct RGBA colors.
@@ -148,35 +135,6 @@ public:
         );
     }
 
-    /**
-     * @brief Fast-pass discrete color accessor, ignoring the smooth shading logarithmic overhead.
-     */
-    static inline Pixel EvaluateDiscrete(unsigned int iter, unsigned int active_max_iter, 
-                                         const std::vector<GradientStop>& stops, 
-                                         bool root_scaling) noexcept 
-    {
-        if (iter >= active_max_iter) return core::PIXEL_BLACK;
-        
-        float t = static_cast<float>(iter) / static_cast<float>(active_max_iter);
-        if (root_scaling) t = std::sqrt(t);
-        
-        return SampleGradient(stops, t);
-    }
-
-    /**
-     * @brief Allows float iterations for manual custom external smooth handlers.
-     */
-    static inline Pixel EvaluateContinuous(float iter, unsigned int active_max_iter, 
-                                           const std::vector<GradientStop>& stops, 
-                                           bool root_scaling) noexcept 
-    {
-        if (iter >= static_cast<float>(active_max_iter)) return core::PIXEL_BLACK;
-
-        float t = iter / static_cast<float>(active_max_iter);
-        if (root_scaling) t = std::sqrt(t);
-        
-        return SampleGradient(stops, t);
-    }
 };
 
 } // namespace engine::util

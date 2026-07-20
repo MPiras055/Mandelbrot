@@ -48,11 +48,6 @@ public:
         data_[size_++] = value;
     }
 
-    inline T back() const {
-        assert(size_ > 0 && "LazyVector::back() called on empty vector");
-        return data_[size_ - 1];
-    }
-
     /**
         * @brief Unchecked in-place construction for maximum performance.
         * @details Constructs the element directly in the allocated memory, 

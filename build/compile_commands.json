@@ -1,37 +1,37 @@
 [
 {
   "directory": "/home/matti/Projects/mandelbrot/build",
-  "command": "/usr/bin/c++ -DGRAPHICS_API_OPENGL_33 -DPLATFORM_DESKTOP -I/home/matti/Projects/mandelbrot/SYSTEM -I/home/matti/Projects/mandelbrot/include -I/home/matti/Projects/mandelbrot/deps/boost -I/home/matti/Projects/mandelbrot/deps/raylib/src -O3 -DNDEBUG -std=gnu++26 -O3 -march=native -ffast-math -Wno-deprecated-literal-operator -o CMakeFiles/MandelbrotApp.dir/src/engine/Camera.cpp.o -c /home/matti/Projects/mandelbrot/src/engine/Camera.cpp",
+  "command": "/usr/bin/c++ -DGRAPHICS_API_OPENGL_33 -DPLATFORM_DESKTOP -I/home/matti/Projects/mandelbrot/SYSTEM -I/home/matti/Projects/mandelbrot/include -I/home/matti/Projects/mandelbrot/deps/boost -I/home/matti/Projects/mandelbrot/deps/raylib/src -O3 -DNDEBUG -std=gnu++26 -flto=auto -fno-fat-lto-objects -O3 -march=native -mtune=native -ftree-vectorize -funroll-loops -ffast-math -fno-finite-math-only -fno-signed-zeros -Wno-deprecated-literal-operator -o CMakeFiles/MandelbrotApp.dir/src/engine/Camera.cpp.o -c /home/matti/Projects/mandelbrot/src/engine/Camera.cpp",
   "file": "/home/matti/Projects/mandelbrot/src/engine/Camera.cpp",
   "output": "CMakeFiles/MandelbrotApp.dir/src/engine/Camera.cpp.o"
 },
 {
   "directory": "/home/matti/Projects/mandelbrot/build",
-  "command": "/usr/bin/c++ -DGRAPHICS_API_OPENGL_33 -DPLATFORM_DESKTOP -I/home/matti/Projects/mandelbrot/SYSTEM -I/home/matti/Projects/mandelbrot/include -I/home/matti/Projects/mandelbrot/deps/boost -I/home/matti/Projects/mandelbrot/deps/raylib/src -O3 -DNDEBUG -std=gnu++26 -O3 -march=native -ffast-math -Wno-deprecated-literal-operator -o CMakeFiles/MandelbrotApp.dir/src/engine/DoubleCanvas.cpp.o -c /home/matti/Projects/mandelbrot/src/engine/DoubleCanvas.cpp",
+  "command": "/usr/bin/c++ -DGRAPHICS_API_OPENGL_33 -DPLATFORM_DESKTOP -I/home/matti/Projects/mandelbrot/SYSTEM -I/home/matti/Projects/mandelbrot/include -I/home/matti/Projects/mandelbrot/deps/boost -I/home/matti/Projects/mandelbrot/deps/raylib/src -O3 -DNDEBUG -std=gnu++26 -flto=auto -fno-fat-lto-objects -O3 -march=native -mtune=native -ftree-vectorize -funroll-loops -ffast-math -fno-finite-math-only -fno-signed-zeros -Wno-deprecated-literal-operator -o CMakeFiles/MandelbrotApp.dir/src/engine/DoubleCanvas.cpp.o -c /home/matti/Projects/mandelbrot/src/engine/DoubleCanvas.cpp",
   "file": "/home/matti/Projects/mandelbrot/src/engine/DoubleCanvas.cpp",
   "output": "CMakeFiles/MandelbrotApp.dir/src/engine/DoubleCanvas.cpp.o"
 },
 {
   "directory": "/home/matti/Projects/mandelbrot/build",
-  "command": "/usr/bin/c++ -DGRAPHICS_API_OPENGL_33 -DPLATFORM_DESKTOP -I/home/matti/Projects/mandelbrot/SYSTEM -I/home/matti/Projects/mandelbrot/include -I/home/matti/Projects/mandelbrot/deps/boost -I/home/matti/Projects/mandelbrot/deps/raylib/src -O3 -DNDEBUG -std=gnu++26 -O3 -march=native -ffast-math -Wno-deprecated-literal-operator -o CMakeFiles/MandelbrotApp.dir/src/engine/EscapeTimeEngine.cpp.o -c /home/matti/Projects/mandelbrot/src/engine/EscapeTimeEngine.cpp",
+  "command": "/usr/bin/c++ -DGRAPHICS_API_OPENGL_33 -DPLATFORM_DESKTOP -I/home/matti/Projects/mandelbrot/SYSTEM -I/home/matti/Projects/mandelbrot/include -I/home/matti/Projects/mandelbrot/deps/boost -I/home/matti/Projects/mandelbrot/deps/raylib/src -O3 -DNDEBUG -std=gnu++26 -flto=auto -fno-fat-lto-objects -O3 -march=native -mtune=native -ftree-vectorize -funroll-loops -ffast-math -fno-finite-math-only -fno-signed-zeros -Wno-deprecated-literal-operator -o CMakeFiles/MandelbrotApp.dir/src/engine/EscapeTimeEngine.cpp.o -c /home/matti/Projects/mandelbrot/src/engine/EscapeTimeEngine.cpp",
   "file": "/home/matti/Projects/mandelbrot/src/engine/EscapeTimeEngine.cpp",
   "output": "CMakeFiles/MandelbrotApp.dir/src/engine/EscapeTimeEngine.cpp.o"
 },
 {
   "directory": "/home/matti/Projects/mandelbrot/build",
-  "command": "/usr/bin/c++ -DGRAPHICS_API_OPENGL_33 -DPLATFORM_DESKTOP -I/home/matti/Projects/mandelbrot/SYSTEM -I/home/matti/Projects/mandelbrot/include -I/home/matti/Projects/mandelbrot/deps/boost -I/home/matti/Projects/mandelbrot/deps/raylib/src -O3 -DNDEBUG -std=gnu++26 -O3 -march=native -ffast-math -Wno-deprecated-literal-operator -o CMakeFiles/MandelbrotApp.dir/src/engine/MandelbrotEngine.cpp.o -c /home/matti/Projects/mandelbrot/src/engine/MandelbrotEngine.cpp",
+  "command": "/usr/bin/c++ -DGRAPHICS_API_OPENGL_33 -DPLATFORM_DESKTOP -I/home/matti/Projects/mandelbrot/SYSTEM -I/home/matti/Projects/mandelbrot/include -I/home/matti/Projects/mandelbrot/deps/boost -I/home/matti/Projects/mandelbrot/deps/raylib/src -O3 -DNDEBUG -std=gnu++26 -flto=auto -fno-fat-lto-objects -O3 -march=native -mtune=native -ftree-vectorize -funroll-loops -ffast-math -fno-finite-math-only -fno-signed-zeros -Wno-deprecated-literal-operator -o CMakeFiles/MandelbrotApp.dir/src/engine/MandelbrotEngine.cpp.o -c /home/matti/Projects/mandelbrot/src/engine/MandelbrotEngine.cpp",
   "file": "/home/matti/Projects/mandelbrot/src/engine/MandelbrotEngine.cpp",
   "output": "CMakeFiles/MandelbrotApp.dir/src/engine/MandelbrotEngine.cpp.o"
 },
 {
   "directory": "/home/matti/Projects/mandelbrot/build",
-  "command": "/usr/bin/c++ -DGRAPHICS_API_OPENGL_33 -DPLATFORM_DESKTOP -I/home/matti/Projects/mandelbrot/SYSTEM -I/home/matti/Projects/mandelbrot/include -I/home/matti/Projects/mandelbrot/deps/boost -I/home/matti/Projects/mandelbrot/deps/raylib/src -O3 -DNDEBUG -std=gnu++26 -O3 -march=native -ffast-math -Wno-deprecated-literal-operator -o CMakeFiles/MandelbrotApp.dir/src/engine/PerturbationEngine.cpp.o -c /home/matti/Projects/mandelbrot/src/engine/PerturbationEngine.cpp",
+  "command": "/usr/bin/c++ -DGRAPHICS_API_OPENGL_33 -DPLATFORM_DESKTOP -I/home/matti/Projects/mandelbrot/SYSTEM -I/home/matti/Projects/mandelbrot/include -I/home/matti/Projects/mandelbrot/deps/boost -I/home/matti/Projects/mandelbrot/deps/raylib/src -O3 -DNDEBUG -std=gnu++26 -flto=auto -fno-fat-lto-objects -O3 -march=native -mtune=native -ftree-vectorize -funroll-loops -ffast-math -fno-finite-math-only -fno-signed-zeros -Wno-deprecated-literal-operator -o CMakeFiles/MandelbrotApp.dir/src/engine/PerturbationEngine.cpp.o -c /home/matti/Projects/mandelbrot/src/engine/PerturbationEngine.cpp",
   "file": "/home/matti/Projects/mandelbrot/src/engine/PerturbationEngine.cpp",
   "output": "CMakeFiles/MandelbrotApp.dir/src/engine/PerturbationEngine.cpp.o"
 },
 {
   "directory": "/home/matti/Projects/mandelbrot/build",
-  "command": "/usr/bin/c++ -DGRAPHICS_API_OPENGL_33 -DPLATFORM_DESKTOP -I/home/matti/Projects/mandelbrot/SYSTEM -I/home/matti/Projects/mandelbrot/include -I/home/matti/Projects/mandelbrot/deps/boost -I/home/matti/Projects/mandelbrot/deps/raylib/src -O3 -DNDEBUG -std=gnu++26 -O3 -march=native -ffast-math -Wno-deprecated-literal-operator -o CMakeFiles/MandelbrotApp.dir/src/main.cpp.o -c /home/matti/Projects/mandelbrot/src/main.cpp",
+  "command": "/usr/bin/c++ -DGRAPHICS_API_OPENGL_33 -DPLATFORM_DESKTOP -I/home/matti/Projects/mandelbrot/SYSTEM -I/home/matti/Projects/mandelbrot/include -I/home/matti/Projects/mandelbrot/deps/boost -I/home/matti/Projects/mandelbrot/deps/raylib/src -O3 -DNDEBUG -std=gnu++26 -flto=auto -fno-fat-lto-objects -O3 -march=native -mtune=native -ftree-vectorize -funroll-loops -ffast-math -fno-finite-math-only -fno-signed-zeros -Wno-deprecated-literal-operator -o CMakeFiles/MandelbrotApp.dir/src/main.cpp.o -c /home/matti/Projects/mandelbrot/src/main.cpp",
   "file": "/home/matti/Projects/mandelbrot/src/main.cpp",
   "output": "CMakeFiles/MandelbrotApp.dir/src/main.cpp.o"
 },

@@ -1,5 +1,6 @@
 #pragma once
 #include "core/Numeric.hpp"
+#include "core/Kernel.hpp"
 #include <array>
 #include <complex>
 #include <limits>
@@ -19,20 +20,11 @@ struct RebaseMatrix__ {
     
     std::complex<core::BigFloat> center;
     std::complex<double> stepSize;
-    unsigned int reductionCounter{0};
 
-    void init(const std::complex<core::BigFloat>& start_center, 
+    void init(const std::complex<core::BigFloat>& start_center,
               const std::complex<double>& start_step) {
         center = start_center;
         stepSize = start_step;
-        reductionCounter = 0;
-    }
-
-    void reset() {
-        reductionCounter = 0;
-        rebaseMatrix.fill(OrbitData{});
-        center = std::complex<core::BigFloat>();
-        stepSize = {0.0, 0.0};
     }
 
     // Read-only: Safe to call from multiple threads
@@ -52,25 +44,35 @@ struct RebaseMatrix__ {
     // MT-SAFE COMPUTE AND WRITE
     // Safe as long as your thread pool assigns a unique 'idx' to each thread.
     // The C++ memory model guarantees distinct array elements can be mutated concurrently.
-    void computeAndStoreAt(int idx, unsigned int max_iterations) {
-        std::complex<core::BigFloat> c = getPointAt(idx);
-        std::complex<core::BigFloat> z(0.0, 0.0);
-        
+    //
+    // @param aborted  polled every `core::ABORT_POLL_MASK + 1` iterations. The high-res
+    //   search runs this with the FULL iteration budget, so without a cancellation check a
+    //   single probe cell could grind through `max_iterations` BigFloat steps with no way
+    //   to stop — while the surrounding code assumes abort lands promptly. Bailing early
+    //   still records the partial depth; the cell simply ranks lower.
+    template <typename AbortFn>
+    void computeAndStoreAt(int idx, unsigned int max_iterations, AbortFn&& aborted) {
+        const std::complex<core::BigFloat> c = getPointAt(idx);
+        core::BigFloat z_r = 0.0, z_i = 0.0;
+        const core::BigFloat c_r = c.real(), c_i = c.imag();
+
         unsigned int depth = 0;
         double min_z_sq = std::numeric_limits<double>::max();
-        
-        // Skip the first few iterations so the initial z=0 and z=c 
+
+        // Skip the first few iterations so the initial z=0 and z=c
         // don't falsely trigger the minimum distance tracker.
         const unsigned int MIN_ITER_IGNORE = 5;
 
         while (depth < max_iterations) {
-            z = z * z + c;
-            
+            if ((depth & core::ABORT_POLL_MASK) == 0 && aborted()) break;
+
+            // Fused 3-multiply step (the std::complex spelling cost 4 plus temporaries).
+            core::mandelStep(z_r, z_i, c_r, c_i);
+
             // Convert to double for fast distance approximation.
-            // Adapt this cast to whatever method your core::BigFloat uses to expose doubles.
-            double z_real = static_cast<double>(z.real());
-            double z_imag = static_cast<double>(z.imag());
-            double norm_sq = z_real * z_real + z_imag * z_imag;
+            const double z_real = static_cast<double>(z_r);
+            const double z_imag = static_cast<double>(z_i);
+            const double norm_sq = z_real * z_real + z_imag * z_imag;
 
             if (norm_sq > 4.0) {
                 break;
@@ -79,7 +81,7 @@ struct RebaseMatrix__ {
             if (depth > MIN_ITER_IGNORE && norm_sq < min_z_sq) {
                 min_z_sq = norm_sq;
             }
-            
+
             depth++;
         }
 
@@ -131,8 +133,7 @@ struct RebaseMatrix__ {
         center.imag(center.imag() + core::BigFloat(offset_y));
 
         stepSize = {stepSize.real() * shrink_factor, stepSize.imag() * shrink_factor};
-        reductionCounter++;
-        
+
         return best_depth;
     }
 };
