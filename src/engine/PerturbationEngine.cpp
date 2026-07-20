@@ -250,12 +250,9 @@ void PerturbationEngine::processPerturbationJob(job::RenderJob& job) {
     // and records it as the reusable reference for subsequent previews.
     auto publishBuilt = [&](ReferenceCache* local) {
         if (!job.aborted()) {
-            // Reuse while the camera stays within ~half a view diagonal of here.
-            const double half_dx = specs.width  * 0.5 * specs.pixelStep.real();
-            const double half_dy = specs.height * 0.5 * specs.pixelStep.imag();
-            lastRefCamCenter_   = specs.reference;
-            lastRefValidRadius_ = std::sqrt(half_dx * half_dx + half_dy * half_dy);
-            lastRefIters_       = specs.iterations;
+            lastRefCamCenter_ = specs.reference;
+            lastRefPixelStep_ = specs.pixelStep.real();   // zoom at build (for the reuse zoom check)
+            lastRefIters_     = specs.iterations;
             lastRef_.store(local, std::memory_order_release);   // publishes the metadata above
         }
         rebuilds_.fetch_add(1, std::memory_order_relaxed);
@@ -270,9 +267,18 @@ void PerturbationEngine::processPerturbationJob(job::RenderJob& job) {
         ReferenceCache* reuse = lastRef_.load(std::memory_order_acquire);
         bool reusable = (reuse != nullptr) && reuse->valid && (lastRefIters_ >= specs.iterations);
         if (reusable) {
+            // (2) Zoom must be within ~1 octave — else the reference is stale for this depth.
+            const double zoomRatio = specs.pixelStep.real() / lastRefPixelStep_;
+            reusable = (zoomRatio > 0.5 && zoomRatio < 2.0);
+        }
+        if (reusable) {
+            // (3) Camera within half the CURRENT view diagonal of the reference centre.
+            const double half_dx = specs.width  * 0.5 * specs.pixelStep.real();
+            const double half_dy = specs.height * 0.5 * specs.pixelStep.imag();
+            const double validRadius = std::sqrt(half_dx * half_dx + half_dy * half_dy);
             const double dx = static_cast<double>(specs.reference.real() - lastRefCamCenter_.real());
             const double dy = static_cast<double>(specs.reference.imag() - lastRefCamCenter_.imag());
-            reusable = (dx * dx + dy * dy) < (lastRefValidRadius_ * lastRefValidRadius_);
+            reusable = (dx * dx + dy * dy) < (validRadius * validRadius);
         }
         if (reusable) {
             // One worker republishes the existing reference; the rest fall through to waitCache.

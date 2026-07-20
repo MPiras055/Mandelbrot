@@ -218,7 +218,7 @@ class PerturbationEngine {
     // metadata written before it. (Cross-frame lifetime vs stragglers deferred.)
     std::atomic<ReferenceCache*> lastRef_{nullptr};
     std::complex<core::BigFloat> lastRefCamCenter_;   // camera centre when it was built
-    double lastRefValidRadius_{0.0};                  // reuse while |cam − camCentre| < this
+    double lastRefPixelStep_{0.0};                    // pixelStep.real() at build (zoom check)
     unsigned int lastRefIters_{0};
 
     // Per-worker reference-cache pool: the frame's leader builds the reference into its
