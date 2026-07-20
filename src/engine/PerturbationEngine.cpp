@@ -246,17 +246,47 @@ void PerturbationEngine::processPerturbationJob(job::RenderJob& job) {
              + std::sqrt(half_dx * half_dx + half_dy * half_dy);
     };
 
-    // Leader publishes its just-built local cache pointer (or CACHE_ABORT if the job died).
+    // Leader publishes its just-built local cache pointer (or CACHE_ABORT if the job died),
+    // and records it as the reusable reference for subsequent previews.
     auto publishBuilt = [&](ReferenceCache* local) {
+        if (!job.aborted()) {
+            // Reuse while the camera stays within ~half a view diagonal of here.
+            const double half_dx = specs.width  * 0.5 * specs.pixelStep.real();
+            const double half_dy = specs.height * 0.5 * specs.pixelStep.imag();
+            lastRefCamCenter_   = specs.reference;
+            lastRefValidRadius_ = std::sqrt(half_dx * half_dx + half_dy * half_dy);
+            lastRefIters_       = specs.iterations;
+            lastRef_.store(local, std::memory_order_release);   // publishes the metadata above
+        }
         rebuilds_.fetch_add(1, std::memory_order_relaxed);
         jobState.publishCache(job.aborted() ? PTB::CACHE_ABORT : static_cast<void*>(local));
     };
 
     // ---- Phase 1: build the reference, publish the pointer ----
     if (!specs.fullReference) {
-        // LOW-RES: a SINGLE cooperative probe pass over a SMALL grid (all idle workers
+        // LOW-RES: REUSE the last reference while the camera is within its validity radius
+        // (stable, flicker-free previews + no rebuild). All workers read the same stable
+        // lastRef_ so they agree on the decision.
+        ReferenceCache* reuse = lastRef_.load(std::memory_order_acquire);
+        bool reusable = (reuse != nullptr) && reuse->valid && (lastRefIters_ >= specs.iterations);
+        if (reusable) {
+            const double dx = static_cast<double>(specs.reference.real() - lastRefCamCenter_.real());
+            const double dy = static_cast<double>(specs.reference.imag() - lastRefCamCenter_.imag());
+            reusable = (dx * dx + dy * dy) < (lastRefValidRadius_ * lastRefValidRadius_);
+        }
+        if (reusable) {
+            // One worker republishes the existing reference; the rest fall through to waitCache.
+            void* expected = nullptr;
+            if (jobState.rebaseMatrix.compare_exchange_strong(
+                    expected, reinterpret_cast<void*>(1), std::memory_order_acq_rel))
+                jobState.publishCache(job.aborted() ? PTB::CACHE_ABORT : static_cast<void*>(reuse));
+            goto render_phase;
+        }
+
+        // Otherwise: a SINGLE cooperative probe pass over a SMALL grid (all idle workers
         // help), capped iterations (ranking only). The last reporter recenters on the
-        // deepest cell, builds the reference to full depth, and publishes it.
+        // deepest cell, builds the reference to full depth, publishes it, and records it
+        // as the new reusable reference.
         RebaseMatrixLow* localMatrixPtr = getLocalMatrixLow();
         std::complex<double> start_step{
             specs.pixelStep.real() * (specs.width / 4.0) / RebaseMatrixLow::DIMENSION,
@@ -341,6 +371,7 @@ void PerturbationEngine::processPerturbationJob(job::RenderJob& job) {
     }
 
     // ---- All workers: obtain the published reference (or bail on abort) ----
+render_phase:
     void* cachePtr = jobState.waitCache();
     if (cachePtr == PTB::CACHE_ABORT) return;
     const ReferenceCache* __restrict__ cache = static_cast<const ReferenceCache*>(cachePtr);

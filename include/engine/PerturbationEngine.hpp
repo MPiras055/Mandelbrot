@@ -212,6 +212,15 @@ class PerturbationEngine {
     };
     std::atomic<uint64_t> rebuilds_{0};                   // reference rebuilds (telemetry)
 
+    // Last built reference, kept across frames so low-res previews REUSE it (temporal
+    // stability + speed) while the camera stays within its validity radius; only settles
+    // (or a too-far pan / iteration change) rebuild. `lastRef_`'s release publishes the
+    // metadata written before it. (Cross-frame lifetime vs stragglers deferred.)
+    std::atomic<ReferenceCache*> lastRef_{nullptr};
+    std::complex<core::BigFloat> lastRefCamCenter_;   // camera centre when it was built
+    double lastRefValidRadius_{0.0};                  // reuse while |cam − camCentre| < this
+    unsigned int lastRefIters_{0};
+
     // Per-worker reference-cache pool: the frame's leader builds the reference into its
     // OWN cache and publishes the pointer in the job; followers render against it. No
     // global cache. (Lifetime vs a straggler reusing this while another job reads it is
