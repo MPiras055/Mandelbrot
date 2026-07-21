@@ -47,7 +47,6 @@ if ! conda env list | grep -q "^$ENV_NAME "; then
     conda create -n "$ENV_NAME" --override-channels -c conda-forge --yes \
         cmake \
         gxx_linux-64 \
-        libquadmath \
         make \
         boost-cpp \
         libgl-devel \
