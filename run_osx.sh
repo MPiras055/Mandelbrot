@@ -16,13 +16,22 @@ export CONDA_PLUGINS_AUTO_ACCEPT_TOS="true"
 export CI="true"
 
 echo "=================================================="
-echo "         Mandelbrot Launcher & Build Script"
+echo "    Mandelbrot Launcher & Build Script (macOS)"
 echo "=================================================="
 
 # 1. Ensure Conda is installed locally (User-space, no sudo needed)
 if [ ! -d "$CONDA_DIR" ]; then
-    echo "[+] Miniconda not found. Installing to $CONDA_DIR..."
-    wget -q https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -O /tmp/miniconda.sh
+    echo "[+] Miniconda not found. Detecting macOS architecture..."
+    
+    ARCH=$(uname -m)
+    if [ "$ARCH" = "arm64" ]; then
+        MINICONDA_URL="https://repo.anaconda.com/miniconda/Miniconda3-latest-MacOSX-arm64.sh"
+    else
+        MINICONDA_URL="https://repo.anaconda.com/miniconda/Miniconda3-latest-MacOSX-x86_64.sh"
+    fi
+
+    echo "[+] Downloading Miniconda for $ARCH..."
+    curl -fL "$MINICONDA_URL" -o /tmp/miniconda.sh
     bash /tmp/miniconda.sh -b -p "$CONDA_DIR"
     rm /tmp/miniconda.sh
 fi
@@ -43,21 +52,19 @@ fi
 if ! conda env list | grep -q "^$ENV_NAME "; then
     echo "[+] Environment '$ENV_NAME' not found. Creating environment..."
     
+    ARCH=$(uname -m)
+    if [ "$ARCH" = "arm64" ]; then
+        CXX_PKG="clangxx_osx-arm64"
+    else
+        CXX_PKG="clangxx_osx-64"
+    fi
+
     # Use --override-channels with -c conda-forge to bypass Anaconda 'defaults' channel TOS entirely
     conda create -n "$ENV_NAME" --override-channels -c conda-forge --yes \
         cmake \
-        gxx_linux-64 \
+        "$CXX_PKG" \
         make \
-        boost-cpp \
-        libgl-devel \
-        mesalib \
-        xorg-libxrandr \
-        xorg-libxinerama \
-        xorg-libxcursor \
-        xorg-libxi \
-        xorg-libxext \
-        xorg-libx11 \
-        libglu
+        boost-cpp
 fi
 
 # 4. Build the C++ project using 'conda run' (Only if executable does not exist)
