@@ -21,38 +21,43 @@ else
 fi
 
 # =====================================================================
-# 1. SETUP LINUX HEADERS (Linux Only)
+# 1. SETUP COMPILER & SYSTEM HEADERS (Linux Only)
 # =====================================================================
+# macOS uses native Cocoa/Metal frameworks, so Micromamba is only needed on Linux
 if [ "$OS" = "Linux" ]; then
     MAMBA_BIN="$DEV_TOOLS_DIR/bin/micromamba"
     DEV_ENV_DIR="$DEV_TOOLS_DIR/linux_dev_env"
     export MAMBA_ROOT_PREFIX="$DEV_TOOLS_DIR/mamba_root"
 
     if [ ! -f "$MAMBA_BIN" ]; then
-        echo "Downloading portable package manager for Linux system headers..."
+        echo "Downloading portable package manager for Linux headers & compiler..."
         mkdir -p "$DEV_TOOLS_DIR/bin"
         curl -Ls https://micro.mamba.pm/api/micromamba/linux-64/latest | tar -xvj -C "$DEV_TOOLS_DIR" bin/micromamba
     fi
 
     if [ ! -d "$DEV_ENV_DIR" ]; then
-            echo "Creating isolated local environment with modern GCC and X11/OpenGL headers..."
-            "$MAMBA_BIN" create -p "$DEV_ENV_DIR" -y -c conda-forge \
-                c-compiler cxx-compiler \
-                pkg-config xorg-libx11 xorg-libxcursor xorg-libxrandr \
-                xorg-libxinerama xorg-libxi xorg-libxext libgl-devel alsa-lib xorg-xproto
+        echo "Creating isolated environment with modern GCC and X11/OpenGL headers..."
+        "$MAMBA_BIN" create -p "$DEV_ENV_DIR" -y -c conda-forge \
+            c-compiler cxx-compiler \
+            pkg-config xorg-libx11 xorg-libxcursor xorg-libxrandr \
+            xorg-libxinerama xorg-libxi xorg-libxext libgl-devel alsa-lib xorg-xorgproto
     fi
 
-    echo "Activating Linux development headers environment..."
+    echo "Activating Linux development environment..."
     eval "$("$MAMBA_BIN" shell hook -s bash)"
     micromamba activate "$DEV_ENV_DIR"
 
-    # CRITICAL FIX: Force CMake and the compiler to look inside the Micromamba folder
+    # Force CMake, pkg-config, and compilers to search our isolated local directory
     export PKG_CONFIG_PATH="$DEV_ENV_DIR/lib/pkgconfig:$PKG_CONFIG_PATH"
     export CMAKE_PREFIX_PATH="$DEV_ENV_DIR:$CMAKE_PREFIX_PATH"
     export C_INCLUDE_PATH="$DEV_ENV_DIR/include:$C_INCLUDE_PATH"
     export CPLUS_INCLUDE_PATH="$DEV_ENV_DIR/include:$CPLUS_INCLUDE_PATH"
     export LIBRARY_PATH="$DEV_ENV_DIR/lib:$LIBRARY_PATH"
     export LD_LIBRARY_PATH="$DEV_ENV_DIR/lib:$LD_LIBRARY_PATH"
+
+    # FIX: Nullify the broken _X_NONSTRING macro in older X11 headers when using modern GCC
+    export CFLAGS="-D_X_NONSTRING= $CFLAGS"
+    export CXXFLAGS="-D_X_NONSTRING= $CXXFLAGS"
 fi
 
 # =====================================================================
