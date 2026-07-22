@@ -112,16 +112,22 @@ else
     export PATH="$FFMPEG_BIN:$PATH"
 fi
 
+
 # =====================================================================
 # 4. BUILD & EXECUTE
 # =====================================================================
 if [ ! -d "$BUILD_DIR" ] || [ ! -f "$EXECUTABLE" ]; then
     echo "Build not found (or missing executable). Setting up build..."
     
+    # Nuke the old build folder to prevent cache corruption
+    rm -rf "$BUILD_DIR"
     mkdir -p "$BUILD_DIR"
-    cmake -B "$BUILD_DIR"
-    cmake -B "$BUILD_DIR" "-DCMAKE_POLICY_VERSION_MINIMUM=3.5"
-    cmake --build "$BUILD_DIR" --config Release -j --parallel
+    
+    # Configure with the policy fix included on the very first try
+    cmake -B "$BUILD_DIR" -DCMAKE_POLICY_VERSION_MINIMUM=3.5
+    
+    # Compile the project
+    cmake --build "$BUILD_DIR" --config Release -j
 else
     echo "Project is already built. Skipping compilation."
 fi
