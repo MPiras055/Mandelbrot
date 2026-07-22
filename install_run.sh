@@ -47,7 +47,11 @@ if [ "$OS" = "Linux" ]; then
     eval "$("$MAMBA_BIN" shell hook -s bash)"
     micromamba activate "$DEV_ENV_DIR"
 
-    # Force CMake, pkg-config, and compilers to search our isolated local directory
+    # Force PATH and environment variables to prioritize our isolated local directory
+    export PATH="$DEV_ENV_DIR/bin:$PATH"
+    export CC="$DEV_ENV_DIR/bin/gcc"
+    export CXX="$DEV_ENV_DIR/bin/g++"
+    
     export PKG_CONFIG_PATH="$DEV_ENV_DIR/lib/pkgconfig:$PKG_CONFIG_PATH"
     export CMAKE_PREFIX_PATH="$DEV_ENV_DIR:$CMAKE_PREFIX_PATH"
     export C_INCLUDE_PATH="$DEV_ENV_DIR/include:$C_INCLUDE_PATH"
@@ -123,8 +127,11 @@ if [ ! -d "$BUILD_DIR" ] || [ ! -f "$EXECUTABLE" ]; then
     rm -rf "$BUILD_DIR"
     mkdir -p "$BUILD_DIR"
     
-    # Configure with the policy fix included on the very first try
-    cmake -B "$BUILD_DIR" -DCMAKE_POLICY_VERSION_MINIMUM=3.5
+    # Configure with explicit compiler paths passed to CMake
+    cmake -B "$BUILD_DIR" \
+          -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+          -DCMAKE_C_COMPILER="$CC" \
+          -DCMAKE_CXX_COMPILER="$CXX"
     
     # Compile the project
     cmake --build "$BUILD_DIR" --config Release -j
