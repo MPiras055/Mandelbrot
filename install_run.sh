@@ -35,11 +35,11 @@ if [ "$OS" = "Linux" ]; then
     fi
 
     if [ ! -d "$DEV_ENV_DIR" ]; then
-        echo "Creating isolated local environment with X11/OpenGL headers..."
-        # Added xorg-xproto here (contains the core X11/X.h header)
-        "$MAMBA_BIN" create -p "$DEV_ENV_DIR" -y -c conda-forge \
-            pkg-config xorg-libx11 xorg-libxcursor xorg-libxrandr \
-            xorg-libxinerama xorg-libxi xorg-libxext libgl-devel alsa-lib xorg-xproto
+            echo "Creating isolated local environment with modern GCC and X11/OpenGL headers..."
+            "$MAMBA_BIN" create -p "$DEV_ENV_DIR" -y -c conda-forge \
+                c-compiler cxx-compiler \
+                pkg-config xorg-libx11 xorg-libxcursor xorg-libxrandr \
+                xorg-libxinerama xorg-libxi xorg-libxext libgl-devel alsa-lib xorg-xproto
     fi
 
     echo "Activating Linux development headers environment..."
