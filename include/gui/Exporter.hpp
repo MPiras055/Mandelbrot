@@ -14,10 +14,12 @@
     #define POPEN _popen
     #define PCLOSE _pclose
     #define NULL_DEV "NUL"
+    #define POPEN_WRITE_MODE "wb" // CRITICAL FIX: "wb" prevents Windows from corrupting raw binary streams
 #else
     #define POPEN popen
     #define PCLOSE pclose
     #define NULL_DEV "/dev/null"
+    #define POPEN_WRITE_MODE "w"  // POSIX popen prefers standard "w"
 #endif
 
 namespace gui {
@@ -35,14 +37,29 @@ public:
 
     static std::string SaveDialog(const char* title, const char* defaultName) {
         std::string cmd;
+        
+        // Extract the target extension (e.g., "png" or "mp4") from the defaultName
+        std::string def(defaultName);
+        std::string ext;
+        size_t dotPos = def.find_last_of('.');
+        if (dotPos != std::string::npos) {
+            ext = def.substr(dotPos + 1);
+        }
 
 #if defined(_WIN32)
-        // Windows: Use PowerShell to call the native .NET SaveFileDialog
+        // Windows: Configured with explicit Filters and Extension settings
         cmd = "powershell -NoProfile -Command \"Add-Type -AssemblyName System.Windows.Forms; "
               "$dlg = New-Object System.Windows.Forms.SaveFileDialog; "
               "$dlg.Title = '"; cmd += title; cmd += "'; "
-              "$dlg.FileName = '"; cmd += defaultName; cmd += "'; "
-              "if ($dlg.ShowDialog() -eq 'OK') { $dlg.FileName }\"";
+              "$dlg.FileName = '"; cmd += defaultName; cmd += "'; ";
+        
+        if (!ext.empty()) {
+            cmd += "$dlg.DefaultExt = '"; cmd += ext; cmd += "'; ";
+            cmd += "$dlg.Filter = '"; cmd += ext; cmd += " files (*."; cmd += ext; cmd += ")|*."; cmd += ext; cmd += "|All files (*.*)|*.*'; ";
+            cmd += "$dlg.AddExtension = $true; ";
+        }
+        
+        cmd += "if ($dlg.ShowDialog() -eq 'OK') { $dlg.FileName }\"";
 #elif defined(__APPLE__)
         // macOS: Use AppleScript via osascript
         cmd = "osascript -e 'tell application \"System Events\" to set myFile to choose file name "
@@ -69,6 +86,16 @@ public:
 #endif
 
         while (!path.empty() && (path.back() == '\n' || path.back() == '\r')) path.pop_back();
+
+        // Safety fallback: Force append the extension if the user deleted it in the dialog
+        if (!path.empty() && !ext.empty()) {
+            std::string dottedExt = "." + ext;
+            if (path.length() < dottedExt.length() || 
+                path.compare(path.length() - dottedExt.length(), dottedExt.length(), dottedExt) != 0) {
+                path += dottedExt;
+            }
+        }
+
         return path;
     }
 
@@ -139,7 +166,7 @@ public:
             if (onProgress && !onProgress(i + 1, frames, ctx)) { cancelled = true; break; }
         }
 
-        PCLOSE(pipe); // OS-agnostic pclose macro
+        PCLOSE(pipe);
         cam.warp(start);
 
         if (cancelled) {
@@ -166,8 +193,10 @@ private:
             "ffmpeg -y -f rawvideo -pixel_format rgba -video_size %ux%u -framerate %d -i - "
             "-vf \"scale=trunc(iw/2)*2:trunc(ih/2)*2\" "
             "-c:v libx264 -pix_fmt yuv420p -crf 18 -preset fast \"%s\" > %s 2>&1",
-            w, h, VIDEO_FPS, outPath.c_str(), NULL_DEV); // Uses NUL on Win, /dev/null on POSIX
-        return POPEN(cmd, "w");
+            w, h, VIDEO_FPS, outPath.c_str(), NULL_DEV); 
+        
+        // CRITICAL: Must use POPEN_WRITE_MODE ("wb" on Windows) to stream pure binary pixels.
+        return POPEN(cmd, POPEN_WRITE_MODE);
     }
 
     static Result ExportPathAsPngs(engine::MandelbrotEngine& engine, engine::Camera& cam,
