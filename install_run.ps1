@@ -63,13 +63,12 @@ if ($SystemFFmpeg) {
 $ExeFile = "$BuildDir\$AppName"
 $ExeFileWindows = "$BuildDir\$AppName.exe"
 
-# Check if build directory is missing, or if both variations of the executable are missing
 if ((-not (Test-Path $BuildDir)) -or ((-not (Test-Path $ExeFile)) -and (-not (Test-Path $ExeFileWindows)))) {
     Write-Host "Build not found. Setting up build..." -ForegroundColor Cyan
     New-Item -ItemType Directory -Force -Path $BuildDir | Out-Null
     
-    # Configure CMake. (Add -G "MinGW Makefiles" here if you are using WinLibs/GCC instead of MSVC)
-    cmake -B $BuildDir
+    # CRITICAL WINDOWS FIX: Force CMake to use our portable GCC instead of looking for Visual Studio
+    cmake -B $BuildDir -G "MinGW Makefiles"
     if ($LASTEXITCODE -ne 0) { throw "CMake configuration failed." }
 
     # Compile the project
