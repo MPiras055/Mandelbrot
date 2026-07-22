@@ -23,7 +23,6 @@ fi
 # =====================================================================
 # 1. SETUP LINUX HEADERS (Linux Only)
 # =====================================================================
-# macOS uses native Cocoa frameworks, so Micromamba is only needed on Linux
 if [ "$OS" = "Linux" ]; then
     MAMBA_BIN="$DEV_TOOLS_DIR/bin/micromamba"
     DEV_ENV_DIR="$DEV_TOOLS_DIR/linux_dev_env"
@@ -37,14 +36,23 @@ if [ "$OS" = "Linux" ]; then
 
     if [ ! -d "$DEV_ENV_DIR" ]; then
         echo "Creating isolated local environment with X11/OpenGL headers..."
+        # Added xorg-xproto here (contains the core X11/X.h header)
         "$MAMBA_BIN" create -p "$DEV_ENV_DIR" -y -c conda-forge \
             pkg-config xorg-libx11 xorg-libxcursor xorg-libxrandr \
-            xorg-libxinerama xorg-libxi xorg-libxext libgl-devel alsa-lib
+            xorg-libxinerama xorg-libxi xorg-libxext libgl-devel alsa-lib xorg-xproto
     fi
 
     echo "Activating Linux development headers environment..."
     eval "$("$MAMBA_BIN" shell hook -s bash)"
     micromamba activate "$DEV_ENV_DIR"
+
+    # CRITICAL FIX: Force CMake and the compiler to look inside the Micromamba folder
+    export PKG_CONFIG_PATH="$DEV_ENV_DIR/lib/pkgconfig:$PKG_CONFIG_PATH"
+    export CMAKE_PREFIX_PATH="$DEV_ENV_DIR:$CMAKE_PREFIX_PATH"
+    export C_INCLUDE_PATH="$DEV_ENV_DIR/include:$C_INCLUDE_PATH"
+    export CPLUS_INCLUDE_PATH="$DEV_ENV_DIR/include:$CPLUS_INCLUDE_PATH"
+    export LIBRARY_PATH="$DEV_ENV_DIR/lib:$LIBRARY_PATH"
+    export LD_LIBRARY_PATH="$DEV_ENV_DIR/lib:$LD_LIBRARY_PATH"
 fi
 
 # =====================================================================
@@ -53,7 +61,6 @@ fi
 if command -v cmake >/dev/null 2>&1; then
     echo "System CMake detected: $(command -v cmake)"
 else
-    # Determine binary path based on OS
     if [ "$OS" = "Darwin" ]; then
         CMAKE_BIN="$DEV_TOOLS_DIR/cmake/CMake.app/Contents/bin"
     else
@@ -87,7 +94,6 @@ else
         echo "FFmpeg not found globally. Downloading portable $OS build..."
         if [ "$OS" = "Darwin" ]; then
             mkdir -p "$FFMPEG_BIN"
-            # Evermeet provides robust static macOS builds in a ZIP
             curl -L "https://evermeet.cx/ffmpeg/getrelease/zip" -o "$DEV_TOOLS_DIR/ffmpeg.zip"
             unzip -q "$DEV_TOOLS_DIR/ffmpeg.zip" -d "$FFMPEG_BIN"
             rm "$DEV_TOOLS_DIR/ffmpeg.zip"
