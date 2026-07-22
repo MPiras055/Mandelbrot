@@ -13,17 +13,18 @@ OS="$(uname -s)"
 ARCH="$(uname -m)"
 
 if [ "$ARCH" = "x86_64" ] || [ "$ARCH" = "amd64" ]; then
-    LINUX_ARCH="x86_64"
+    SYS_ARCH="x86_64"
+    CONDA_ARCH="64"
     FFMPEG_ARCH="amd64"
 else
-    LINUX_ARCH="aarch64"
+    SYS_ARCH="aarch64"
+    CONDA_ARCH="aarch64"
     FFMPEG_ARCH="arm64"
 fi
 
 # =====================================================================
 # 1. SETUP COMPILER & SYSTEM HEADERS (Linux Only)
 # =====================================================================
-# macOS uses native Cocoa/Metal frameworks, so Micromamba is only needed on Linux
 if [ "$OS" = "Linux" ]; then
     MAMBA_BIN="$DEV_TOOLS_DIR/bin/micromamba"
     DEV_ENV_DIR="$DEV_TOOLS_DIR/linux_dev_env"
@@ -35,22 +36,25 @@ if [ "$OS" = "Linux" ]; then
         curl -Ls https://micro.mamba.pm/api/micromamba/linux-64/latest | tar -xvj -C "$DEV_TOOLS_DIR" bin/micromamba
     fi
 
+    echo "Ensuring cutting-edge GCC 14+ (C++26) is installed..."
     if [ ! -d "$DEV_ENV_DIR" ]; then
-        echo "Creating isolated environment with modern GCC and X11/OpenGL headers..."
         "$MAMBA_BIN" create -p "$DEV_ENV_DIR" -y -c conda-forge \
-            c-compiler cxx-compiler \
+            "gcc_linux-${CONDA_ARCH}>=14" "gxx_linux-${CONDA_ARCH}>=14" \
             pkg-config xorg-libx11 xorg-libxcursor xorg-libxrandr \
             xorg-libxinerama xorg-libxi xorg-libxext libgl-devel alsa-lib xorg-xorgproto
+    else
+        # Force install/update if the environment already exists so we don't get stuck on GCC 12
+        "$MAMBA_BIN" install -p "$DEV_ENV_DIR" -y -c conda-forge \
+            "gcc_linux-${CONDA_ARCH}>=14" "gxx_linux-${CONDA_ARCH}>=14"
     fi
 
     echo "Activating Linux development environment..."
     eval "$("$MAMBA_BIN" shell hook -s bash)"
     micromamba activate "$DEV_ENV_DIR"
 
-    # Force PATH and environment variables to prioritize our isolated local directory
-    export PATH="$DEV_ENV_DIR/bin:$PATH"
-    export CC="$DEV_ENV_DIR/bin/gcc"
-    export CXX="$DEV_ENV_DIR/bin/g++"
+    # Print the compiler version to guarantee it is GCC 14+
+    echo "Using C++ Compiler: $CXX"
+    $CXX --version | head -n 1
     
     export PKG_CONFIG_PATH="$DEV_ENV_DIR/lib/pkgconfig:$PKG_CONFIG_PATH"
     export CMAKE_PREFIX_PATH="$DEV_ENV_DIR:$CMAKE_PREFIX_PATH"
@@ -83,9 +87,9 @@ else
             tar -xzf "$DEV_TOOLS_DIR/cmake.tar.gz" -C "$DEV_TOOLS_DIR"
             mv "$DEV_TOOLS_DIR"/cmake-*-macos-universal "$DEV_TOOLS_DIR/cmake"
         else
-            curl -L "https://github.com/Kitware/CMake/releases/download/v3.30.2/cmake-3.30.2-linux-${LINUX_ARCH}.tar.gz" -o "$DEV_TOOLS_DIR/cmake.tar.gz"
+            curl -L "https://github.com/Kitware/CMake/releases/download/v3.30.2/cmake-3.30.2-linux-${SYS_ARCH}.tar.gz" -o "$DEV_TOOLS_DIR/cmake.tar.gz"
             tar -xzf "$DEV_TOOLS_DIR/cmake.tar.gz" -C "$DEV_TOOLS_DIR"
-            mv "$DEV_TOOLS_DIR"/cmake-*-linux-${LINUX_ARCH} "$DEV_TOOLS_DIR/cmake"
+            mv "$DEV_TOOLS_DIR"/cmake-*-linux-${SYS_ARCH} "$DEV_TOOLS_DIR/cmake"
         fi
         rm "$DEV_TOOLS_DIR/cmake.tar.gz"
     fi
@@ -116,22 +120,22 @@ else
     export PATH="$FFMPEG_BIN:$PATH"
 fi
 
-
 # =====================================================================
 # 4. BUILD & EXECUTE
 # =====================================================================
 if [ ! -d "$BUILD_DIR" ] || [ ! -f "$EXECUTABLE" ]; then
-    echo "Build not found (or missing executable). Setting up build..."
+    echo "Setting up build..."
     
     # Nuke the old build folder to prevent cache corruption
     rm -rf "$BUILD_DIR"
     mkdir -p "$BUILD_DIR"
     
     # Configure with explicit compiler paths passed to CMake
+    # We use ${CC} and ${CXX} which Micromamba natively populates with the correct wrapper binaries
     cmake -B "$BUILD_DIR" \
           -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
-          -DCMAKE_C_COMPILER="$CC" \
-          -DCMAKE_CXX_COMPILER="$CXX"
+          -DCMAKE_C_COMPILER="${CC:-gcc}" \
+          -DCMAKE_CXX_COMPILER="${CXX:-g++}"
     
     # Compile the project
     cmake --build "$BUILD_DIR" --config Release -j
