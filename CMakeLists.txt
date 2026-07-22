@@ -13,11 +13,14 @@ include(FetchContent)
 # --- Raylib ---
 FetchContent_Declare(
     raylib
-    GIT_REPOSITORY https://github.com/raysan5/raylib.git
-    GIT_TAG        5.0
-    GIT_SHALLOW    ON
+    URL https://github.com/raysan5/raylib/archive/refs/tags/5.0.zip
+    DOWNLOAD_EXTRACT_TIMESTAMP TRUE
 )
+
+# Temporarily disable CMake deprecation warnings for this dependency
+set(CMAKE_WARN_DEPRECATED OFF)
 FetchContent_MakeAvailable(raylib)
+set(CMAKE_WARN_DEPRECATED ON)
 
 FetchContent_Declare(
     boost
@@ -83,7 +86,16 @@ if(lto_supported)
     )
 endif()
 
+# =====================================================================
+# 6. LINK LIBRARIES
+# =====================================================================
 target_link_libraries(${PROJECT_NAME} PRIVATE 
     raylib 
     quadmath 
 )
+
+# CRITICAL WINDOWS FIX: The Ultimate Static Hammer
+# Forces MinGW to pack libstdc++, libgcc, winpthread, and quadmath directly into the .exe
+if(WIN32 AND CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -static -static-libgcc -static-libstdc++")
+endif()
