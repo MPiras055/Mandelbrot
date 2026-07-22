@@ -106,12 +106,12 @@ if ((-not (Test-Path $BuildDir)) -or ((-not (Test-Path $ExeFile)) -and (-not (Te
     New-Item -ItemType Directory -Force -Path $BuildDir | Out-Null
    
     # Force CMake to use our portable GCC
-    cmake -B $BuildDir -G "MinGW Makefiles"
+    cmake -B $BuildDir -G "MinGW Makefiles" "-DCMAKE_POLICY_VERSION_MINIMUM=3.5"
     if ($LASTEXITCODE -ne 0) { throw "CMake configuration failed." }
 
 
     # Compile the project
-    cmake --build $BuildDir --config Release -j
+    cmake --build $BuildDir --config Release -j --parallel
     if ($LASTEXITCODE -ne 0) { throw "CMake build failed." }
 } else {
     Write-Host "Project is already built. Skipping compilation." -ForegroundColor Green

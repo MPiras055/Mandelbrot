@@ -120,7 +120,8 @@ if [ ! -d "$BUILD_DIR" ] || [ ! -f "$EXECUTABLE" ]; then
     
     mkdir -p "$BUILD_DIR"
     cmake -B "$BUILD_DIR"
-    cmake --build "$BUILD_DIR" --config Release -j
+    cmake -B "$BUILD_DIR" "-DCMAKE_POLICY_VERSION_MINIMUM=3.5"
+    cmake --build "$BUILD_DIR" --config Release -j --parallel
 else
     echo "Project is already built. Skipping compilation."
 fi

@@ -17,10 +17,7 @@ FetchContent_Declare(
     DOWNLOAD_EXTRACT_TIMESTAMP TRUE
 )
 
-# Temporarily disable CMake deprecation warnings for this dependency
-set(CMAKE_WARN_DEPRECATED OFF)
 FetchContent_MakeAvailable(raylib)
-set(CMAKE_WARN_DEPRECATED ON)
 
 FetchContent_Declare(
     boost
