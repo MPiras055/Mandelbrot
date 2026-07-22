@@ -1,12 +1,14 @@
-cmake_minimum_required(VERSION 3.14)
+cmake_minimum_required(VERSION 3.25) # CRITICAL FIX: CMake 3.14 does not know what C++26 is
 project(MandelbrotApp)
 
 set(CMAKE_CXX_STANDARD 26)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
-
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-set(CMAKE_BUILD_TYPE Release)
+# Default to Release if not specified
+if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+    set(CMAKE_BUILD_TYPE Release CACHE STRING "Choose the type of build." FORCE)
+endif()
 
 include(FetchContent)
 
@@ -22,27 +24,22 @@ set(CMAKE_WARN_DEPRECATED OFF)
 FetchContent_MakeAvailable(raylib)
 set(CMAKE_WARN_DEPRECATED ON)
 
+# --- Boost ---
 FetchContent_Declare(
     boost
     URL https://archives.boost.io/release/1.84.0/source/boost_1_84_0.tar.bz2
     DOWNLOAD_EXTRACT_TIMESTAMP TRUE
 )
 
-FetchContent_GetProperties(boost)
-if(NOT boost_POPULATED)
-    if(POLICY CMP0169)
-        cmake_policy(SET CMP0169 OLD)
-    endif()
-    
-    FetchContent_Populate(boost)
-endif()
+# CRITICAL FIX: MakeAvailable avoids the deprecated FetchContent_Populate and CMP0169 entirely
+FetchContent_MakeAvailable(boost) 
 
 # --- Suppress compiler warnings from building Raylib and its bundled GLFW ---
 if(TARGET raylib)
-    target_compile_options(raylib PRIVATE $<$<C_COMPILER_ID:GNU,Clang>:-w>)
+    target_compile_options(raylib PRIVATE $<$<CXX_COMPILER_ID:GNU,Clang>:-w>)
 endif()
 if(TARGET glfw)
-    target_compile_options(glfw PRIVATE $<$<C_COMPILER_ID:GNU,Clang>:-w>)
+    target_compile_options(glfw PRIVATE $<$<CXX_COMPILER_ID:GNU,Clang>:-w>)
 endif()
 
 file(GLOB_RECURSE PROJECT_HEADERS 
@@ -66,12 +63,17 @@ target_include_directories(${PROJECT_NAME}
         ${boost_SOURCE_DIR} 
 )
 
+# CRITICAL FIX: Wrap GCC-specific flags so they don't break MSVC on Windows
 target_compile_options(${PROJECT_NAME} PRIVATE 
-    $<$<CONFIG:Release>:-O3 -march=native -mtune=native>
+    $<$<AND:$<CONFIG:Release>,$<CXX_COMPILER_ID:GNU,Clang>>:
+        -O3 -march=native -mtune=native
+        -ftree-vectorize -funroll-loops
+        -ffast-math -fno-finite-math-only -fno-signed-zeros
+    >
     
-    $<$<CONFIG:Release>:-ftree-vectorize -funroll-loops>
-    
-    $<$<CONFIG:Release>:-ffast-math -fno-finite-math-only -fno-signed-zeros>
+    $<$<AND:$<CONFIG:Release>,$<CXX_COMPILER_ID:MSVC>>:
+        /O2 /fp:fast
+    >
 
     $<$<CXX_COMPILER_ID:GNU,Clang>:-Wno-deprecated-literal-operator>
 
@@ -87,12 +89,14 @@ if(lto_supported)
 endif()
 
 # =====================================================================
-# 6. LINK LIBRARIES
+# LINK LIBRARIES
 # =====================================================================
-target_link_libraries(${PROJECT_NAME} PRIVATE 
-    raylib 
-    quadmath 
-)
+target_link_libraries(${PROJECT_NAME} PRIVATE raylib)
+
+# quadmath is a GCC extension; MSVC does not have it.
+if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    target_link_libraries(${PROJECT_NAME} PRIVATE quadmath)
+endif()
 
 # CRITICAL WINDOWS FIX: The Ultimate Static Hammer
 # Forces MinGW to pack libstdc++, libgcc, winpthread, and quadmath directly into the .exe
