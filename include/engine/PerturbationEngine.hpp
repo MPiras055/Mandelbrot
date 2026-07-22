@@ -3,11 +3,11 @@
 #include <cassert>
 #include "core/Numeric.hpp"
 #include "core/Kernel.hpp"
+#include "macro_util.hpp"
 #include "util/ColorUtil.hpp"
 #include "job/RenderJob.hpp"
 #include "util/LazyVector.hpp"
 #include "util/RebaseMatrix.hpp"
-
 namespace engine {
 
 using BigFloat = core::BigFloat;
@@ -27,7 +27,7 @@ class PerturbationEngine {
     //initialize matrix dimensions
     using RebaseMatrix = RebaseMatrix__<64>;      // wide grid for the parallel high-res search
     using RebaseMatrixLow = RebaseMatrix__<12>;    // small grid for the solo low-res probe (64 cells)
-    static constexpr unsigned int MAX_WORKERS = 128;
+    static constexpr unsigned int MAX_WORKERS = 64;
     /// Neighbourhood-search shrink per pass (used at every `shrinkAndCenter` call site).
     static constexpr double REBASE_SHRINK_FACTOR = 0.25;
     // The low-res probe only needs to RANK cells by depth, so cap its per-cell iterations
@@ -64,9 +64,6 @@ class PerturbationEngine {
         }();
         return ptr;
     }
-
-    
-    
 
     /**
      * @brief: record struct that is used to store the final orbit
@@ -107,7 +104,29 @@ class PerturbationEngine {
         std::complex<core::BigFloat> reference;     // absolute reference (center + probe delta)
         unsigned int iterations{0};            // orbit depth this cache was built to
         bool valid{false};
+        TaggedReferenceCounter refCount;
 
+        /**
+         * @brief: acquires the cache
+         */
+        void acquire() {
+            refCount.acquire();
+        }
+
+        /**
+         * @brief: releases the cache 
+         */
+        void release() {
+            refCount.release();
+        }
+
+        /**
+         * @brief: check if the cache is being referenced by any thread
+         */
+        bool isReferenced() const noexcept {
+            return refCount.zero();
+        }
+        
         /// @return the actual orbit length (== max_iterations if the reference never
         /// escaped). Polls @p job so a long BigFloat build aborts promptly when the
         /// frame is superseded; on abort it returns early with the cache left invalid
@@ -153,7 +172,7 @@ class PerturbationEngine {
                     ComplexDouble{ static_cast<double>(z_r), static_cast<double>(z_i) }});
 
                 // Step the reference orbit forward in BigFloat (shared canonical step).
-                core::mandelStep(z_r, z_i, reference.real(), reference.imag());
+                core::mandelbrotStep(z_r, z_i, reference.real(), reference.imag());
                 actual_length++;
 
                 // If the reference orbit escapes, stop building early.
@@ -219,34 +238,98 @@ class PerturbationEngine {
             }
         }
     };
-    std::atomic<uint64_t> rebuilds_{0};                   // reference rebuilds (telemetry)
+    
+    struct CACHE_ALIGN ThreadLocalCell {
+        std::atomic<ReferenceCache*> hazardPtr;
+        CACHE_PAD(std::atomic<ReferenceCache*>);
+        ReferenceCache* localCache;
+        std::vector<ReferenceCache*> deferDeallocBucket;
 
-    // Last built reference, kept across frames so low-res previews REUSE it (temporal
-    // stability + speed) while the camera stays within its validity radius; only settles
-    // (or a too-far pan / iteration change) rebuild. `lastRef_`'s release publishes the
-    // metadata written before it. (Cross-frame lifetime vs stragglers deferred.)
-    std::atomic<ReferenceCache*> lastRef_{nullptr};
-    std::complex<core::BigFloat> lastRefCamCenter_;   // camera centre when it was built
-    double lastRefPixelStep_{0.0};                    // pixelStep.real() at build (zoom check)
-    unsigned int lastRefIters_{0};
+        ~ThreadLocalCell() {
+            delete localCache;
+            for(auto r : deferDeallocBucket) delete r;
+        }
+
+
+        bool isLocalCacheReachable(std::array<ThreadLocalCell,MAX_WORKERS>& workerLocalCache_) const {
+            for(const ThreadLocalCell& c: workerLocalCache_) {
+                if(localCache == c.hazardPtr.load(std::memory_order_acquire)) return true;
+            }
+            return false;
+        }
+        
+        ReferenceCache* protectCache(std::atomic<ReferenceCache*>& globalRef) {
+            ReferenceCache* toReturn = nullptr;
+            do {
+                toReturn = globalRef.load(std::memory_order_acquire);
+                hazardPtr.store(toReturn);
+            } while(hazardPtr.load(std::memory_order_relaxed) != globalRef.load(std::memory_order_acquire));
+            return toReturn;
+        }
+     
+        void releaseCache() {
+            hazardPtr.store(nullptr,std::memory_order_release);
+        }
+
+        void deferDealloc(ReferenceCache* cache) {
+            assert(cache != nullptr && "Cannot enqueue nullptr in deferDeallocBucket");
+            deferDeallocBucket.push_back(cache);
+        }
+
+        void sweepBucket(const std::array<ThreadLocalCell, MAX_WORKERS>& workerLocalCache_) {
+            size_t writeIdx = 0;
+            for (size_t readIdx = 0; readIdx < deferDeallocBucket.size(); ++readIdx) {
+                ReferenceCache* ref = deferDeallocBucket[readIdx];
+                bool isProtected = false;
+                for (const auto& cell : workerLocalCache_) {
+                    if (ref == cell.hazardPtr.load(std::memory_order_acquire)) {
+                        isProtected = true;
+                        break;
+                    }
+                }
+                if (isProtected) {
+                    // Keep the item, pack it to the front of the vector
+                    deferDeallocBucket[writeIdx++] = ref;
+                } else {
+                    // Unreferenced: delete immediately
+                    delete ref;
+                }
+            }
+            // Shrink vector to remove the freed slots
+            deferDeallocBucket.resize(writeIdx);
+        }
+
+    };
 
     // Per-worker reference-cache pool: the frame's leader builds the reference into its
     // OWN cache and publishes the pointer in the job; followers render against it. No
     // global cache. (Lifetime vs a straggler reusing this while another job reads it is
     // intentionally ignored for now — hazard pointers / pooling later.)
-    std::array<ReferenceCache*, MAX_WORKERS> workerLocalCache_{};
+    std::array<ThreadLocalCell, MAX_WORKERS> workerLocalCache_{};
     std::atomic<uint32_t> nextWorkerLocalCache_{0};
 
-    ReferenceCache* getLocalCache() {
-        static thread_local ReferenceCache* ptr = [this]() {
-            const size_t my_idx = nextWorkerLocalCache_.fetch_add(1ul, std::memory_order_relaxed);
-            assert(my_idx < MAX_WORKERS && "Exceeded MAX_WORKERS cache allocation limits!");
-            ReferenceCache* allocated = new ReferenceCache();
-            workerLocalCache_[my_idx] = allocated;
-            return allocated;
+    ThreadLocalCell& getThreadLocalCell() {
+        static thread_local size_t idx = [this]() {
+            const size_t my_idx = nextWorkerLocalCache_.fetch_add(1ul,std::memory_order_acq_rel);
+            assert(my_idx < MAX_WORKERS && "Exceeded MAX_WORKERS thread local cells");
+            workerLocalCache_[my_idx].localCache = new ReferenceCache();
+            return my_idx;
         }();
-        return ptr;
+        return workerLocalCache_[idx];
     }
+
+    ReferenceCache* getLocalCache() {
+        return getThreadLocalCell().localCache;
+    }
+    
+    // Last built reference, kept across frames so low-res previews REUSE it (temporal
+    // stability + speed) while the camera stays within its validity radius; only settles
+    // (or a too-far pan / iteration change) rebuild. `lastRef_`'s release publishes the
+    // metadata written before it. (Cross-frame lifetime vs stragglers deferred.)
+    std::atomic<ReferenceCache*> globalCache{nullptr};
+    std::complex<core::BigFloat> globalCacheCameraCenter;   // camera centre when it was built
+    double globalCachePixelStep{0.0};                    // pixelStep.real() at build (zoom check)
+    unsigned int globalCacheIterations{0};
 
     const util::Gradient& gradient;
 
@@ -260,12 +343,20 @@ public:
     explicit PerturbationEngine(const util::Gradient& gradient, core::Pixel*& back_buf_ref):
         gradient(gradient),back_buf_ref(back_buf_ref) {}
 
+    ~PerturbationEngine() {
+        for(size_t i = 0; i < nextWorkerLocal; i++) {
+            delete workerLocalPtr[i];
+        }
+        
+
+        for(size_t i = 0; i < nextWorkerLocalLow; i++) {
+            delete workerLocalPtrLow[i];
+        }
+        
+    }
+
     /// Three-phase per-job driver (validate → rebuild → render). Defined in the .cpp.
     void processPerturbationJob(job::RenderJob& job);
-
-    /// Number of reference-orbit rebuilds so far (increments once per frame now that
-    /// the reference is rebuilt unconditionally).
-    uint64_t rebuildCount() const noexcept { return rebuilds_.load(std::memory_order_relaxed); }
 
     static inline size_t getChunks(unsigned int width, unsigned int height) noexcept {
         return core::ComputeTotalChunks(width, height);

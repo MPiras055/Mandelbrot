@@ -1,91 +1,89 @@
 cmake_minimum_required(VERSION 3.14)
 project(MandelbrotApp)
 
-# Use C++26 for std::experimental::simd
 set(CMAKE_CXX_STANDARD 26)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# CRITICAL FOR LSP: Generates compile_commands.json
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-# Force Release Mode for maximum compiler optimization passes
 set(CMAKE_BUILD_TYPE Release)
 
-# =====================================================================
-# 1. TRACK ALL SOURCE AND HEADER FILES FOR THE TARGET
-# =====================================================================
-# We explicitly gather all .hpp and .h files. This maps 
-# your entire include/ folder structure into the build 
-# system so clangd stops treating headers 
-# inside subdirectories as isolated orphans.
+include(FetchContent)
+
+# --- Raylib ---
+FetchContent_Declare(
+    raylib
+    GIT_REPOSITORY https://github.com/raysan5/raylib.git
+    GIT_TAG        5.0
+    GIT_SHALLOW    ON
+)
+FetchContent_MakeAvailable(raylib)
+
+FetchContent_Declare(
+    boost
+    URL https://archives.boost.io/release/1.84.0/source/boost_1_84_0.tar.bz2
+    DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+)
+
+FetchContent_GetProperties(boost)
+if(NOT boost_POPULATED)
+    if(POLICY CMP0169)
+        cmake_policy(SET CMP0169 OLD)
+    endif()
+    
+    FetchContent_Populate(boost)
+endif()
+
+# --- Suppress compiler warnings from building Raylib and its bundled GLFW ---
+if(TARGET raylib)
+    target_compile_options(raylib PRIVATE $<$<C_COMPILER_ID:GNU,Clang>:-w>)
+endif()
+if(TARGET glfw)
+    target_compile_options(glfw PRIVATE $<$<C_COMPILER_ID:GNU,Clang>:-w>)
+endif()
+
 file(GLOB_RECURSE PROJECT_HEADERS 
     "${CMAKE_CURRENT_SOURCE_DIR}/include/*.hpp" 
     "${CMAKE_CURRENT_SOURCE_DIR}/include/*.h"
 )
 
-# All translation units under src/ (main + the split-out engine components).
-# NOTE: GLOB is resolved at configure time — re-run cmake after adding a new .cpp.
 file(GLOB_RECURSE PROJECT_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp"
 )
 
-# =====================================================================
-# 2. ADD DEPENDENCIES
-# =====================================================================
-# Add Raylib subdirectory (compiles it contextually)
-add_subdirectory(${CMAKE_SOURCE_DIR}/deps/raylib)
-
-# =====================================================================
-# 3. DEFINE EXECUTABLE TARGET
-# =====================================================================
-# Passing both sources AND headers forces 
-# CMake to group them under the same target.
 add_executable(${PROJECT_NAME} 
     ${PROJECT_SOURCES}
     ${PROJECT_HEADERS}
 )
 
-# =====================================================================
-# 4. TARGET INCLUDE DIRECTORIES (The Angle Bracket Fix)
-# =====================================================================
-# - We use PUBLIC so these directories flow directly into every header file context.
-# - We use SYSTEM to force the build toolchain and Clangd to index "include/" 
-#   as a permanent system anchor root, enabling perfect <...> resolution.
 target_include_directories(${PROJECT_NAME} 
     PUBLIC SYSTEM 
         ${CMAKE_CURRENT_SOURCE_DIR}/include
     SYSTEM PRIVATE 
-        ${CMAKE_CURRENT_SOURCE_DIR}/deps/boost
-)
-# =====================================================================
-# 5. ADVANCED COMPILER OPTIMIZATIONS
-# =====================================================================
-target_compile_options(${PROJECT_NAME} PRIVATE 
-    # Base aggressive optimization & native architecture targeting
-    $<$<CONFIG:Release>:-O3 -march=native -mtune=native>
-    
-    # Advanced Vectorization & Loop Unrolling
-    $<$<CONFIG:Release>:-ftree-vectorize -funroll-loops>
-    
-    # Aggressive Math (Crucial for Mandelbrot escape-time loops)
-    $<$<CONFIG:Release>:-ffast-math -fno-finite-math-only -fno-signed-zeros>
-    
-    # Silencing the specific C++26 warning you had
-    $<$<CXX_COMPILER_ID:GNU,Clang>:-Wno-deprecated-literal-operator>
+        ${boost_SOURCE_DIR} 
 )
 
-# Enable Interprocedural Optimization (LTO) across translation units
+target_compile_options(${PROJECT_NAME} PRIVATE 
+    $<$<CONFIG:Release>:-O3 -march=native -mtune=native>
+    
+    $<$<CONFIG:Release>:-ftree-vectorize -funroll-loops>
+    
+    $<$<CONFIG:Release>:-ffast-math -fno-finite-math-only -fno-signed-zeros>
+
+    $<$<CXX_COMPILER_ID:GNU,Clang>:-Wno-deprecated-literal-operator>
+
+    -DNDEBUG
+)
+
 include(CheckIPOSupported)
 check_ipo_supported(RESULT lto_supported OUTPUT error)
 if(lto_supported)
-    message(STATUS "Link-Time Optimization (LTO) enabled.")
-    set_property(TARGET ${PROJECT_NAME} PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE)
-else()
-    message(STATUS "LTO not supported: ${error}")
+    set_property(
+      TARGET ${PROJECT_NAME} PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE
+    )
 endif()
 
-# =====================================================================
-# 5. COMPILER OPTIMIZATIONS & LINKING
-# =====================================================================
-target_compile_options(${PROJECT_NAME} PRIVATE -O3 -march=native -ffast-math)
-target_link_libraries(${PROJECT_NAME} PRIVATE raylib quadmath)
+target_link_libraries(${PROJECT_NAME} PRIVATE 
+    raylib 
+    quadmath 
+)

@@ -2,6 +2,7 @@
 #include "engine/EscapeTimeEngine.hpp"
 #include "engine/PerturbationEngine.hpp"
 #include "engine/dto/FrameRequest.hpp"
+#include "engine/job/EscapeTimeJob.hpp"
 #include "engine/job/RenderJobStack.hpp"
 #include <complex>
 #include <cassert>
@@ -27,7 +28,8 @@ MandelbrotEngine::MandelbrotEngine(unsigned int width, unsigned int height)
 
 MandelbrotEngine::~MandelbrotEngine() {
     pool.requestStop();
-    jobStack.abort_latest();
+    //push a ghost frame that threads won't see
+    jobStack.try_push<job::EscapeTimeJob>(job::RenderJob::JobSpecs());
     pool.join();
 }
 
@@ -79,9 +81,7 @@ void MandelbrotEngine::workerRoutine(size_t /*thread_id*/) {
             } else if (job.holds<job::RenderJob::PTBJob>()) {
                 ptbEngine.processPerturbationJob(job);
             }
-
             job.release();
-
         } else {
             jobStack.wait_for_job(last_version);
         }

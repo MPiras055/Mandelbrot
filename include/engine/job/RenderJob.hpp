@@ -189,7 +189,7 @@ namespace engine::job {
         friend RenderJobStack;
         uint64_t stamp{};
         JobSpecs specs{};
-        TaggedReferenceCount refCount;
+        TaggedReferenceCounter refCount;
         std::variant<ETAJob, PTBJob> jobState;
 
         /**

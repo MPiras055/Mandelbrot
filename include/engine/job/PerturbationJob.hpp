@@ -91,7 +91,6 @@ struct PerturbationJob {
         return s;
     }
 
-
     // =========================================================================
     // LIFECYCLE (called by RenderJob via std::visit; the render pair is the gate)
     // =========================================================================
@@ -241,7 +240,8 @@ struct PerturbationJob {
         rebaseDone.fetch_or(ABORT_FLAG, std::memory_order_acq_rel);
         rebaseDone.notify_all();
         // wake anyone parked waiting for the reference-cache publication
-        refCache.store(CACHE_ABORT, std::memory_order_release);
+        // No valid pointer has the lsb setted to 1
+        refCache.store(CACHE_ABORT,std::memory_order_release);
         refCache.notify_all();
 
         if ((last & STD_MASK) < render_total) {

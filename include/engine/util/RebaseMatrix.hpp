@@ -27,20 +27,6 @@ struct RebaseMatrix__ {
         stepSize = start_step;
     }
 
-    // Read-only: Safe to call from multiple threads
-    std::complex<core::BigFloat> getPointAt(int idx) const {
-        int row = idx / SQUARE;
-        int col = idx % SQUARE;
-        
-        double offset_x = (col - CENTER_OFFSET) * stepSize.real();
-        double offset_y = (row - CENTER_OFFSET) * stepSize.imag();
-
-        return {
-            center.real() + core::BigFloat(offset_x),
-            center.imag() + core::BigFloat(offset_y)
-        };
-    }
-
     // MT-SAFE COMPUTE AND WRITE
     // Safe as long as your thread pool assigns a unique 'idx' to each thread.
     // The C++ memory model guarantees distinct array elements can be mutated concurrently.
@@ -52,6 +38,7 @@ struct RebaseMatrix__ {
     //   still records the partial depth; the cell simply ranks lower.
     template <typename AbortFn>
     void computeAndStoreAt(int idx, unsigned int max_iterations, AbortFn&& aborted) {
+        if(idx > DIMENSION) return;
         const std::complex<core::BigFloat> c = getPointAt(idx);
         core::BigFloat z_r = 0.0, z_i = 0.0;
         const core::BigFloat c_r = c.real(), c_i = c.imag();
@@ -67,7 +54,7 @@ struct RebaseMatrix__ {
             if ((depth & core::ABORT_POLL_MASK) == 0 && aborted()) break;
 
             // Fused 3-multiply step (the std::complex spelling cost 4 plus temporaries).
-            core::mandelStep(z_r, z_i, c_r, c_i);
+            core::mandelbrotStep(z_r, z_i, c_r, c_i);
 
             // Convert to double for fast distance approximation.
             const double z_real = static_cast<double>(z_r);
@@ -135,5 +122,19 @@ struct RebaseMatrix__ {
         stepSize = {stepSize.real() * shrink_factor, stepSize.imag() * shrink_factor};
 
         return best_depth;
+    }
+
+    private:
+    std::complex<core::BigFloat> getPointAt(int idx) const {
+        int row = idx / SQUARE;
+        int col = idx % SQUARE;
+        
+        double offset_x = (col - CENTER_OFFSET) * stepSize.real();
+        double offset_y = (row - CENTER_OFFSET) * stepSize.imag();
+
+        return {
+            center.real() + core::BigFloat(offset_x),
+            center.imag() + core::BigFloat(offset_y)
+        };
     }
 };

@@ -17,7 +17,7 @@
  * the ABA problem. The version can also be used to track generations of the same 
  * resource
  */
-struct TaggedReferenceCount {
+struct TaggedReferenceCounter {
     private:
     using u64 = uint64_t;
     public:

@@ -65,7 +65,7 @@ namespace core {
      * @tparam T scalar float type (double / BigFloat).
      */
     template <typename T>
-    inline void mandelStep(T& zr, T& zi, const T& cr, const T& ci) noexcept {
+    inline void mandelbrotStep(T& zr, T& zi, const T& cr, const T& ci) noexcept {
         const T zr2 = zr * zr;
         const T zi2 = zi * zi;
         const T next_zi = T(2) * zr * zi + ci;

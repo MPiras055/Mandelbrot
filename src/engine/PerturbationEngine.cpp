@@ -196,25 +196,27 @@ void PerturbationEngine::processPerturbationJob(job::RenderJob& job) {
     // and records it as the reusable reference for subsequent previews.
     auto publishBuilt = [&](ReferenceCache* local) {
         if (!job.aborted()) {
-            lastRefCamCenter_ = specs.reference;
-            lastRefPixelStep_ = specs.pixelStep.real();   // zoom at build (for the reuse zoom check)
-            lastRefIters_     = specs.iterations;
-            lastRef_.store(local, std::memory_order_release);   // publishes the metadata above
+            globalCacheCameraCenter = specs.reference;
+            globalCachePixelStep = specs.pixelStep.real();   // zoom at build (for the reuse zoom check)
+            globalCacheIterations     = specs.iterations;
+            globalCache.store(local, std::memory_order_release);   // publishes the metadata above
         }
-        rebuilds_.fetch_add(1, std::memory_order_relaxed);
         jobState.publishCache(job.aborted() ? PTB::CACHE_ABORT : static_cast<void*>(local));
     };
 
+
+    bool cachePublisher = false;
+    
     // ---- Phase 1: build the reference, publish the pointer ----
     if (!specs.fullReference) {
         // LOW-RES: REUSE the last reference while the camera is within its validity radius
         // (stable, flicker-free previews + no rebuild). All workers read the same stable
         // lastRef_ so they agree on the decision.
-        ReferenceCache* reuse = lastRef_.load(std::memory_order_acquire);
-        bool reusable = (reuse != nullptr) && reuse->valid && (lastRefIters_ >= specs.iterations);
+        ReferenceCache* reuse = globalCache.load(std::memory_order_acquire);
+        bool reusable = (reuse != nullptr) && reuse->valid && (globalCacheIterations >= specs.iterations);
         if (reusable) {
             // (2) Zoom must be within ~1 octave — else the reference is stale for this depth.
-            const double zoomRatio = specs.pixelStep.real() / lastRefPixelStep_;
+            const double zoomRatio = specs.pixelStep.real() / globalCachePixelStep;
             reusable = (zoomRatio > 0.5 && zoomRatio < 2.0);
         }
         if (reusable) {
@@ -222,8 +224,8 @@ void PerturbationEngine::processPerturbationJob(job::RenderJob& job) {
             const double half_dx = specs.width  * 0.5 * specs.pixelStep.real();
             const double half_dy = specs.height * 0.5 * specs.pixelStep.imag();
             const double validRadius = std::sqrt(half_dx * half_dx + half_dy * half_dy);
-            const double dx = static_cast<double>(specs.reference.real() - lastRefCamCenter_.real());
-            const double dy = static_cast<double>(specs.reference.imag() - lastRefCamCenter_.imag());
+            const double dx = static_cast<double>(specs.reference.real() - globalCacheCameraCenter.real());
+            const double dy = static_cast<double>(specs.reference.imag() - globalCacheCameraCenter.imag());
             reusable = (dx * dx + dy * dy) < (validRadius * validRadius);
         }
         if (reusable) {
@@ -245,17 +247,24 @@ void PerturbationEngine::processPerturbationJob(job::RenderJob& job) {
 
         size_t cell;
         uint32_t iteration;
-        bool leader = false;
+        bool leaderPhase = false;
         while (jobState.claimRebase(RebaseMatrixLow::REBASE_MTX_CHUNKS, iteration, cell)) {
             sm.computeAndStoreAt(cell, probe_cap, [&]{ return job.aborted(); });
-            leader = jobState.reportRebase(RebaseMatrixLow::REBASE_MTX_CHUNKS);
+            leaderPhase = jobState.reportRebase(RebaseMatrixLow::REBASE_MTX_CHUNKS);
         }
         if (job.aborted()) return;
-        if (leader) {
+        if (leaderPhase) {
+            cachePublisher = true;
             sm.shrinkAndCenter(REBASE_SHRINK_FACTOR);   // recenter on the deepest cell (single pass)
-            ReferenceCache* local = getLocalCache();
-            local->build(job, sm.center, specs.iterations, computeDcMax(sm.center), &jobState.refBuildPercent);
-            publishBuilt(local);
+            ThreadLocalCell& tcell = getThreadLocalCell();
+            if(tcell.isLocalCacheReachable(workerLocalCache_)) {
+                tcell.deferDealloc(tcell.localCache);
+                tcell.localCache = new ReferenceCache();
+            }
+            tcell.localCache->build(job, sm.center, specs.iterations, computeDcMax(sm.center), &jobState.refBuildPercent);
+            publishBuilt(tcell.localCache);
+            //sweep the deallocation list
+            tcell.sweepBucket(workerLocalCache_);
         }
         // non-leaders fall through to waitCache below
     } else {
@@ -267,24 +276,32 @@ void PerturbationEngine::processPerturbationJob(job::RenderJob& job) {
 
         size_t cell;
         uint32_t iteration;
-        bool leader;
+        bool leaderPhase;
 
         while (true) {
-            leader = false;
+            leaderPhase = false;
             while (jobState.claimRebase(RebaseMatrix::REBASE_MTX_CHUNKS, iteration, cell)) {
                 sharedMatrix.computeAndStoreAt(cell, specs.iterations, [&]{ return job.aborted(); });
-                leader = jobState.reportRebase(RebaseMatrix::REBASE_MTX_CHUNKS);
+                leaderPhase = jobState.reportRebase(RebaseMatrix::REBASE_MTX_CHUNKS);
             }
 
             if (job.aborted()) return;
 
-            if (leader) {
+            if (leaderPhase) {
+                cachePublisher = true;
                 sharedMatrix.shrinkAndCenter(REBASE_SHRINK_FACTOR);   // recenter on the deepest cell
                 if (std::abs(sharedMatrix.stepSize.real()) <= limit_x ||
                     std::abs(sharedMatrix.stepSize.imag()) <= limit_y) {
-                    ReferenceCache* local = getLocalCache();
-                    local->build(job, sharedMatrix.center, specs.iterations, computeDcMax(sharedMatrix.center), &jobState.refBuildPercent);
-                    publishBuilt(local);
+                        ThreadLocalCell& tcell = getThreadLocalCell();
+                        if(tcell.isLocalCacheReachable(workerLocalCache_)) {
+                            ReferenceCache* newLocal = new ReferenceCache();
+                            tcell.deferDealloc(tcell.localCache);
+                            tcell.localCache = new ReferenceCache();
+                        }
+                        tcell.localCache->build(job, sharedMatrix.center, specs.iterations, computeDcMax(sharedMatrix.center), &jobState.refBuildPercent);
+                        publishBuilt(tcell.localCache);
+                        //sweep the deallocation list
+                        tcell.sweepBucket(workerLocalCache_);
                 }
                 // Release followers only after the cache is published.
                 jobState.advanceRebase(iteration + 1);
@@ -302,10 +319,16 @@ void PerturbationEngine::processPerturbationJob(job::RenderJob& job) {
 
     // ---- All workers: obtain the published reference (or bail on abort) ----
 render_phase:
+    /**
+    * this may return either nullptr + 1 || a valid pointer || valid pointer + 1
+    */
     void* cachePtr = jobState.waitCache();
-    if (cachePtr == PTB::CACHE_ABORT) return;
-    const ReferenceCache* __restrict__ cache = static_cast<const ReferenceCache*>(cachePtr);
+    if(cachePtr == PTB::CACHE_ABORT) return;
+    ThreadLocalCell& tcell = getThreadLocalCell();
 
+    const ReferenceCache* __restrict__ cache = tcell.protectCache(globalCache);
+    //we could also protect the cache here using a reference counter and use a global cacheDeferredDealloc vector
+    
     // ---- Phase 2: RENDER ----
     // Rebasing resolves every pixel inline, so there is no post-render resolution pass.
     size_t rc;
@@ -313,6 +336,10 @@ render_phase:
         processChunkScalar(job, specs, cache, rc);
         jobState.reportRender();
     }
+
+    tcell.releaseCache();
+    //sweep bucket to try to deallocate some unused stuff
+    tcell.sweepBucket(workerLocalCache_);
 
 }
 
