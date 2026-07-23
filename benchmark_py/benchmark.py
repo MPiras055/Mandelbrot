@@ -11,13 +11,13 @@ import os
 # ==========================================
 # Define the build directory relative to where this Python script is located
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-BUILD_DIR = os.path.join(SCRIPT_DIR,"..","build")
+BUILD_DIR = os.path.join(SCRIPT_DIR, "..", "build")
 
 # Define the executable path
 TARGET_EXE = os.path.join(BUILD_DIR, "benchmarkUtil")
 
 # Define the benchmark parameters
-THREAD_COUNTS = [1, 2, 4, 8, 12, 16, 20 ,24, 30, 32, 38, 42, 48, 52, 56,64]
+THREAD_COUNTS = [1, 2, 4, 8, 12, 16, 20, 24, 30, 32, 38, 42, 48, 52, 56, 64]
 ZOOM_LEVELS = [1e10, 1e80]
 # ==========================================
 
@@ -83,13 +83,13 @@ def main():
     print(f"Thread configs:    {THREAD_COUNTS}\n")
 
     for zoom in ZOOM_LEVELS:
-        # Categorize the filename based on the zoom threshold from the C++ code
-        zoom_label = "deep" if zoom > 100000.0 else "shallow"
+        # Format the zoom level into clean exponential notation (e.g., "1e10")
+        # Removing the '+' that Python's formatter sometimes inserts for positive exponents
+        zoom_str = f"{zoom:.0e}".replace('+', '')
         
-        # New requested naming scheme
-        csv_filename = f"result_zoom_{zoom_label}.csv"
+        csv_filename = f"result_zoom_{zoom_str}.csv"
         
-        print(f"=== Testing {zoom_label.upper()} Zoom (z = {zoom}) ===")
+        print(f"=== Testing Zoom (z = {zoom_str}) ===")
         
         results = []
         for t in THREAD_COUNTS:
