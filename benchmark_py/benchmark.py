@@ -17,7 +17,7 @@ BUILD_DIR = os.path.join(SCRIPT_DIR,"..","build")
 TARGET_EXE = os.path.join(BUILD_DIR, "benchmarkUtil")
 
 # Define the benchmark parameters
-THREAD_COUNTS = [1, 2, 4, 8, 16, 32]
+THREAD_COUNTS = [1, 2, 4, 8, 12, 16, 20 ,24, 30, 32, 38, 42, 48, 52, 56,64]
 ZOOM_LEVELS = [1e10, 1e80]
 # ==========================================
 
