@@ -104,28 +104,6 @@ class PerturbationEngine {
         std::complex<core::BigFloat> reference;     // absolute reference (center + probe delta)
         unsigned int iterations{0};            // orbit depth this cache was built to
         bool valid{false};
-        TaggedReferenceCounter refCount;
-
-        /**
-         * @brief: acquires the cache
-         */
-        void acquire() {
-            refCount.acquire();
-        }
-
-        /**
-         * @brief: releases the cache 
-         */
-        void release() {
-            refCount.release();
-        }
-
-        /**
-         * @brief: check if the cache is being referenced by any thread
-         */
-        bool isReferenced() const noexcept {
-            return refCount.zero();
-        }
         
         /// @return the actual orbit length (== max_iterations if the reference never
         /// escaped). Polls @p job so a long BigFloat build aborts promptly when the

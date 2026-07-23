@@ -12,7 +12,7 @@
 
 namespace engine {
 
-MandelbrotEngine::MandelbrotEngine(unsigned int width, unsigned int height)
+MandelbrotEngine::MandelbrotEngine(unsigned int width, unsigned int height, unsigned int threads)
   : canvas(width, height),
     backBuffer_shared(canvas.back_ptr()),
     jobStack(JOBSTACK_S_DEF),
@@ -23,7 +23,7 @@ MandelbrotEngine::MandelbrotEngine(unsigned int width, unsigned int height)
 
     // Spawn workers only now that every collaborator the routine touches
     // (jobStack, engines, canvas) is fully constructed.
-    pool.start([this](size_t id) { workerRoutine(id); });
+    pool.start([this](size_t id) { workerRoutine(id); },threads);
 }
 
 MandelbrotEngine::~MandelbrotEngine() {

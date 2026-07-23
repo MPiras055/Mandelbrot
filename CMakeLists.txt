@@ -51,48 +51,69 @@ file(GLOB_RECURSE PROJECT_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp"
 )
 
+# --- 1. Exclude entry points from the shared source list ---
+list(REMOVE_ITEM PROJECT_SOURCES 
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/main.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/benchmark.cpp"
+)
+
+# --- 2. Define both executables ---
 add_executable(${PROJECT_NAME} 
-    ${PROJECT_SOURCES}
+    src/main.cpp 
+    ${PROJECT_SOURCES} 
     ${PROJECT_HEADERS}
 )
 
-target_include_directories(${PROJECT_NAME} 
-    PUBLIC SYSTEM 
-        ${CMAKE_CURRENT_SOURCE_DIR}/include
-    SYSTEM PRIVATE 
-        ${boost_SOURCE_DIR} 
+add_executable(benchmarkUtil 
+    src/benchmark.cpp 
+    ${PROJECT_SOURCES} 
+    ${PROJECT_HEADERS}
 )
 
-target_compile_options(${PROJECT_NAME} PRIVATE 
+# --- 3. Create a shared settings container ---
+add_library(SharedProjectSettings INTERFACE)
+
+target_include_directories(SharedProjectSettings INTERFACE 
+    SYSTEM "${CMAKE_CURRENT_SOURCE_DIR}/include"
+    SYSTEM "${boost_SOURCE_DIR}"
+)
+
+target_compile_options(SharedProjectSettings INTERFACE 
     $<$<CONFIG:Release>:-O3 -march=native -mtune=native>
-    
     $<$<CONFIG:Release>:-ftree-vectorize -funroll-loops>
-    
     $<$<CONFIG:Release>:-ffast-math -fno-finite-math-only -fno-signed-zeros>
-
     $<$<CXX_COMPILER_ID:GNU,Clang>:-Wno-deprecated-literal-operator>
-
     -DNDEBUG
 )
 
+target_link_libraries(SharedProjectSettings INTERFACE 
+    raylib 
+    quadmath
+)
+
+# --- 4. Apply settings to both executables ---
+target_link_libraries(${PROJECT_NAME} PRIVATE SharedProjectSettings)
+target_link_libraries(benchmarkUtil PRIVATE SharedProjectSettings)
+
+# --- 5. LTO / IPO Support ---
 include(CheckIPOSupported)
 check_ipo_supported(RESULT lto_supported OUTPUT error)
 if(lto_supported)
     set_property(
-      TARGET ${PROJECT_NAME} PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE
+        TARGET ${PROJECT_NAME} benchmarkUtil 
+        PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE
     )
 endif()
 
 # =====================================================================
-# 6. LINK LIBRARIES
+# 6. LINK LIBRARIES (Handled by SharedProjectSettings above)
 # =====================================================================
-target_link_libraries(${PROJECT_NAME} PRIVATE 
-    raylib 
-    quadmath 
-)
 
 # CRITICAL WINDOWS FIX: The Ultimate Static Hammer
-# Forces MinGW to pack libstdc++, libgcc, winpthread, and quadmath directly into the .exe
+# Forces MinGW to pack libstdc++, 
+# libgcc, winpthread, and quadmath directly into the .exe
 if(WIN32 AND CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
-    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -static -static-libgcc -static-libstdc++")
+    set(CMAKE_EXE_LINKER_FLAGS 
+      "${CMAKE_EXE_LINKER_FLAGS} -static -static-libgcc -static-libstdc++"
+    )
 endif()

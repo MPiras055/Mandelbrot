@@ -27,7 +27,7 @@ using BigFloat = core::BigFloat;
  */
 class MandelbrotEngine {
 public:
-    MandelbrotEngine(unsigned int width, unsigned int height);
+    MandelbrotEngine(unsigned int width, unsigned int height, unsigned int threads = std::thread::hardware_concurrency());
     ~MandelbrotEngine();
 
     MandelbrotEngine(const MandelbrotEngine&) = delete;

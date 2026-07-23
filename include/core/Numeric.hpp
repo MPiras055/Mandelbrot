@@ -17,7 +17,7 @@ namespace core {
 
     // 50 decimal digits of mantissa; used for the camera center and reference
     // orbit generation where double precision is exhausted at deep zoom.
-    using BigFloat = boost::multiprecision::cpp_bin_float_50;
+    using BigFloat = boost::multiprecision::cpp_bin_float_100;
 
     // Per-pixel delta arithmetic and cached reference orbits stay in double.
     using ComplexDouble = std::complex<double>;

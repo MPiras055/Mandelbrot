@@ -22,7 +22,7 @@ struct Palette {
     Gradient    gradient;
 };
 
-inline const std::array<Palette, 5> Presets = {{
+inline const std::array<Palette, 6> Presets = {{
     { "Glacier", {
         .stops = {
             { 0.00f, Pixel{ 0, 2, 10, 255 } },
@@ -42,6 +42,24 @@ inline const std::array<Palette, 5> Presets = {{
             { 0.50f, Pixel{ 235, 90, 0, 255 } },
             { 0.75f, Pixel{ 255, 200, 40, 255 } },
             { 1.00f, Pixel{ 255, 255, 235, 255 } }
+        },
+        .smooth_shading = true,
+        .root_scaling = true
+    }},
+    { "Cosmic Nebula", {
+        .stops = {
+            { 0.000f, Pixel{ 4, 2, 14, 255 } },     // Deep void black/blue
+            { 0.080f, Pixel{ 85, 9, 114, 255 } },   // Rich magenta
+            { 0.150f, Pixel{ 12, 110, 253, 255 } }, // Electric blue
+            { 0.240f, Pixel{ 20, 220, 210, 255 } }, // Cyan glow
+            { 0.320f, Pixel{ 240, 255, 250, 255 } },// Brilliant white/mint
+            { 0.450f, Pixel{ 255, 180, 20, 255 } }, // Burning gold
+            { 0.550f, Pixel{ 140, 15, 0, 255 } },   // Deep crimson
+            { 0.650f, Pixel{ 40, 5, 10, 255 } },    // Dark mahogany shadow
+            { 0.750f, Pixel{ 255, 40, 150, 255 } }, // Neon pink flash
+            { 0.850f, Pixel{ 255, 220, 200, 255 } },// Soft peach highlight
+            { 0.940f, Pixel{ 30, 0, 80, 255 } },    // Dark indigo
+            { 1.000f, Pixel{ 4, 2, 14, 255 } }      // Loop back to void
         },
         .smooth_shading = true,
         .root_scaling = true
