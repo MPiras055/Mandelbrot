@@ -65,7 +65,7 @@ def run_benchmark(exe_path, threads, width, height, zoom, runs):
 def main():
     # We still use argparse for dimensions and runs, so you can tweak them easily
     parser = argparse.ArgumentParser(description="Automated Scalability Benchmark for MandelbrotEngine")
-    parser.add_argument('--runs', type=int, default=5, help="Number of times to run each configuration")
+    parser.add_argument('--runs', type=int, default=3, help="Number of times to run each configuration")
     parser.add_argument('--width', type=int, default=3840, help="Maximum render width")
     parser.add_argument('--height', type=int, default=2160, help="Maximum render height")
     
